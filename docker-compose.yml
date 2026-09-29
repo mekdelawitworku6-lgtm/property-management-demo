@@ -1,0 +1,112 @@
+name: property-management
+
+x-backend-env: &backend-env
+  NODE_ENV: ${NODE_ENV:-development}
+  PORT: 4100
+  BASE_URL: ${BASE_URL:-http://localhost:4100}
+  DATABASE_URL: postgresql://postgres:postgres@postgres:5432/property_management?schema=public
+  JWT_SECRET: ${JWT_SECRET:-dev-access-secret-change-me-in-production}
+  JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1d}
+  JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev-refresh-secret-change-me-in-production}
+  JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-30d}
+  DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:-dev-data-encryption-key-change-me}
+  CORS_ORIGINS: ${CORS_ORIGINS:-*}
+  OWNER_AUTO_APPROVE: ${OWNER_AUTO_APPROVE:-false}
+  TENANT_AUTO_APPROVE: ${TENANT_AUTO_APPROVE:-true}
+  PLATFORM_FEE_PERCENT: ${PLATFORM_FEE_PERCENT:-2}
+  INVOICE_ADVANCE_DAYS: ${INVOICE_ADVANCE_DAYS:-7}
+  RENT_REMINDER_INTERVAL_DAYS: ${RENT_REMINDER_INTERVAL_DAYS:-3}
+  LEASE_EXPIRY_REMINDER_DAYS: ${LEASE_EXPIRY_REMINDER_DAYS:-30}
+  COMPLAINT_ESCALATION_DAYS: ${COMPLAINT_ESCALATION_DAYS:-7}
+  SMS_MOCK: ${SMS_MOCK:-true}
+  SMS_API_URL: ${SMS_API_URL:-}
+  SMS_API_KEY: ${SMS_API_KEY:-}
+  SMS_SENDER_ID: ${SMS_SENDER_ID:-}
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+  TELEBIRR_MOCK: ${TELEBIRR_MOCK:-true}
+  TELEBIRR_API_BASE_URL: ${TELEBIRR_API_BASE_URL:-}
+  TELEBIRR_WEB_BASE_URL: ${TELEBIRR_WEB_BASE_URL:-}
+  TELEBIRR_APP_ID: ${TELEBIRR_APP_ID:-}
+  TELEBIRR_APP_KEY: ${TELEBIRR_APP_KEY:-}
+  TELEBIRR_APP_SECRET: ${TELEBIRR_APP_SECRET:-}
+  TELEBIRR_MERCH_CODE: ${TELEBIRR_MERCH_CODE:-}
+  TELEBIRR_SHORT_CODE: ${TELEBIRR_SHORT_CODE:-}
+  TELEBIRR_PUBLIC_KEY: ${TELEBIRR_PUBLIC_KEY:-}
+  TELEBIRR_PRIVATE_KEY: ${TELEBIRR_PRIVATE_KEY:-}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pm-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: property_management
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d property_management"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    image: property-management-backend
+    build:
+      context: ./apps/backend
+      target: runtime
+    container_name: pm-backend
+    environment: *backend-env
+    ports:
+      - "4100:4100"
+    volumes:
+      - uploads_data:/app/uploads
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4100/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Idempotent demo data; runs once the backend (and its migrations) are healthy.
+  seed:
+    image: property-management-backend
+    container_name: pm-seed
+    command: ["node", "dist/database/seeds/seed.js"]
+    environment: *backend-env
+    restart: "no"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # Dev tooling (tests, migrations, prisma studio) — never run npm on the host.
+  #   docker compose run --rm tools npm test
+  #   docker compose run --rm tools npm run test:e2e
+  #   docker compose run --rm tools npx prisma migrate dev --name <change>
+  tools:
+    build:
+      context: ./apps/backend
+      target: dev
+    profiles: ["tools"]
+    working_dir: /app
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      <<: *backend-env
+      HOME: /tmp
+      NPM_CONFIG_UPDATE_NOTIFIER: "false"
+      TEST_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/property_management_test?schema=public
+    volumes:
+      - ./apps/backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  uploads_data:

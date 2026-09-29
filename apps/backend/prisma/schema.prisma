@@ -1,0 +1,705 @@
+// Property Management / Rental Platform — Ethiopia
+// Single shared database for the Owner Dashboard, Tenant App and Admin Control Dashboard.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────── Enums ───────────────────────────────
+
+enum UserRole {
+  ADMIN // Possible Technology platform staff
+  TELECOM // Ethio Telecom payment-layer staff
+  OWNER
+  MANAGER // property manager acting on behalf of an owner
+  TENANT
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum Language {
+  EN
+  AM
+}
+
+enum OtpPurpose {
+  VERIFY_PHONE
+  RESET_PASSWORD
+}
+
+enum KycStatus {
+  NOT_SUBMITTED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum PropertyType {
+  RESIDENTIAL
+  COMMERCIAL
+  MIXED_USE
+}
+
+enum UnitType {
+  APARTMENT
+  STUDIO
+  VILLA
+  ROOM
+  OFFICE
+  SHOP
+  WAREHOUSE
+  OTHER
+}
+
+enum UnitStatus {
+  VACANT
+  RESERVED
+  OCCUPIED
+  UNDER_MAINTENANCE
+}
+
+enum RentalRequestStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
+enum AgreementStatus {
+  PENDING_SIGNATURE
+  ACTIVE
+  EXPIRED
+  TERMINATED
+  RENEWED
+  CANCELLED
+}
+
+enum InvoiceType {
+  RENT
+  DEPOSIT
+  PENALTY
+  OTHER
+}
+
+enum InvoiceStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum PaymentMethod {
+  TELEBIRR
+  BANK_TRANSFER
+  CASH
+}
+
+enum PaymentStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+  REJECTED
+}
+
+enum ConfirmationSource {
+  TELEBIRR_WEBHOOK
+  ETHIO_TELECOM
+  OWNER
+  ADMIN
+}
+
+enum PayoutStatus {
+  PENDING
+  PAID
+}
+
+enum ComplaintCategory {
+  MAINTENANCE
+  NOISE
+  SAFETY
+  PAYMENT
+  DISPUTE
+  OTHER
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum ComplaintStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum EscalationStatus {
+  NONE
+  ESCALATED
+  ADMIN_RESOLVED
+}
+
+enum VendorServiceType {
+  PLUMBING
+  ELECTRICAL
+  CARPENTRY
+  PAINTING
+  CLEANING
+  SECURITY
+  GENERAL
+  OTHER
+}
+
+enum WorkOrderStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ExpenseCategory {
+  MAINTENANCE
+  UTILITIES
+  TAX
+  INSURANCE
+  MANAGEMENT
+  OTHER
+}
+
+// ─────────────────────────────── Identity ───────────────────────────────
+
+model User {
+  id               String         @id @default(uuid()) @db.Uuid
+  role             UserRole
+  fullName         String         @db.VarChar(150)
+  phoneNumber      String         @unique @db.VarChar(20)
+  email            String?        @unique @db.VarChar(150)
+  passwordHash     String
+  language         Language       @default(EN)
+  approvalStatus   ApprovalStatus @default(PENDING)
+  isSuspended      Boolean        @default(false)
+  suspendedReason  String?
+  suspendedAt      DateTime?
+  phoneVerified    Boolean        @default(false)
+  telegramChatId   String?        @db.VarChar(64)
+  refreshTokenHash String?
+  sessionVersion   Int            @default(0)
+  lastLoginAt      DateTime?
+  // Managers belong to one owner (the "employer"); all other roles leave this null.
+  employerId       String?        @db.Uuid
+  employer         User?          @relation("OwnerManagers", fields: [employerId], references: [id])
+  managers         User[]         @relation("OwnerManagers")
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  ownerProfile  OwnerProfile?
+  tenantProfile TenantProfile?
+
+  properties            Property[]      @relation("PropertyOwner")
+  tenantRequests        RentalRequest[] @relation("RequestTenant")
+  tenantAgreements      Agreement[]     @relation("AgreementTenant")
+  ownerAgreements       Agreement[]     @relation("AgreementOwner")
+  tenantInvoices        Invoice[]       @relation("InvoiceTenant")
+  ownerInvoices         Invoice[]       @relation("InvoiceOwner")
+  tenantPayments        Payment[]       @relation("PaymentTenant")
+  ownerPayments         Payment[]       @relation("PaymentOwner")
+  recordedPayments      Payment[]       @relation("PaymentRecordedBy")
+  confirmedPayments     Payment[]       @relation("PaymentConfirmedBy")
+  payouts               Payout[]
+  tenantComplaints      Complaint[]     @relation("ComplaintTenant")
+  ownerComplaints       Complaint[]     @relation("ComplaintOwner")
+  complaintResponses    ComplaintResponse[]
+  vendors               Vendor[]
+  workOrders            WorkOrder[]     @relation("WorkOrderOwner")
+  expenses              Expense[]
+  notifications         Notification[]
+  auditLogs             AuditLog[]
+
+  @@index([role])
+  @@index([employerId])
+  @@map("users")
+}
+
+model OwnerProfile {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @unique @db.Uuid
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyName    String?  @db.VarChar(150)
+  tinNumber      String?  @db.VarChar(30)
+  address        String?
+  payoutMethod   PaymentMethod?
+  bankName       String?  @db.VarChar(100)
+  bankAccount    String?  @db.VarChar(50)
+  telebirrNumber String?  @db.VarChar(20)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("owner_profiles")
+}
+
+model TenantProfile {
+  id                       String    @id @default(uuid()) @db.Uuid
+  userId                   String    @unique @db.Uuid
+  user                     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  idType                   String?   @db.VarChar(40) // KEBELE_ID, PASSPORT, FAYDA, DRIVING_LICENSE
+  // Encrypted at rest (AES-256-GCM) — see common/utils/crypto.util.ts
+  idNumberEncrypted        String?
+  faydaId                  String?   @db.VarChar(40)
+  kycStatus                KycStatus @default(NOT_SUBMITTED)
+  dateOfBirth              DateTime?
+  occupation               String?   @db.VarChar(100)
+  emergencyContactName     String?   @db.VarChar(150)
+  emergencyContactPhone    String?   @db.VarChar(20)
+  emergencyContactRelation String?   @db.VarChar(50)
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  @@map("tenant_profiles")
+}
+
+model OtpCode {
+  id          String     @id @default(uuid()) @db.Uuid
+  phoneNumber String     @db.VarChar(20)
+  purpose     OtpPurpose
+  codeHash    String
+  attempts    Int        @default(0)
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime   @default(now())
+
+  @@index([phoneNumber, purpose])
+  @@map("otp_codes")
+}
+
+// ─────────────────────────────── Property & Units ───────────────────────────────
+
+model Property {
+  id            String       @id @default(uuid()) @db.Uuid
+  ownerId       String       @db.Uuid
+  owner         User         @relation("PropertyOwner", fields: [ownerId], references: [id])
+  name          String       @db.VarChar(150)
+  type          PropertyType
+  description   String?
+  city          String       @db.VarChar(80)
+  subCity       String?      @db.VarChar(80)
+  woreda        String?      @db.VarChar(40)
+  address       String
+  latitude      Float?
+  longitude     Float?
+  totalArea     Decimal?     @db.Decimal(12, 2)
+  ownershipType String?      @db.VarChar(60) // e.g. FREEHOLD, LEASEHOLD, COOPERATIVE
+  titleDeedNo   String?      @db.VarChar(60)
+  amenities     String[]     @default([])
+  photos        String[]     @default([])
+  isActive      Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  units      Unit[]
+  agreements Agreement[]
+  invoices   Invoice[]
+  payments   Payment[]
+  complaints Complaint[]
+  workOrders WorkOrder[]
+  expenses   Expense[]
+
+  @@index([ownerId])
+  @@index([city])
+  @@map("properties")
+}
+
+model Unit {
+  id            String     @id @default(uuid()) @db.Uuid
+  propertyId    String     @db.Uuid
+  property      Property   @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  unitNumber    String     @db.VarChar(30)
+  floor         Int?
+  type          UnitType
+  bedrooms      Int?
+  bathrooms     Int?
+  sizeSqm       Decimal?   @db.Decimal(10, 2)
+  rentAmount    Decimal    @db.Decimal(12, 2)
+  depositAmount Decimal    @default(0) @db.Decimal(12, 2)
+  currency      String     @default("ETB") @db.VarChar(3)
+  status        UnitStatus @default(VACANT)
+  isListed      Boolean    @default(true)
+  amenities     String[]   @default([])
+  photos        String[]   @default([])
+  terms         String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  rentalRequests RentalRequest[]
+  agreements     Agreement[]
+  invoices       Invoice[]
+  complaints     Complaint[]
+  workOrders     WorkOrder[]
+  expenses       Expense[]
+
+  @@unique([propertyId, unitNumber])
+  @@index([status, isListed])
+  @@map("units")
+}
+
+// ─────────────────────────────── Leasing ───────────────────────────────
+
+model RentalRequest {
+  id               String              @id @default(uuid()) @db.Uuid
+  unitId           String              @db.Uuid
+  unit             Unit                @relation(fields: [unitId], references: [id])
+  tenantId         String              @db.Uuid
+  tenant           User                @relation("RequestTenant", fields: [tenantId], references: [id])
+  message          String?
+  desiredStartDate DateTime
+  durationMonths   Int
+  status           RentalRequestStatus @default(PENDING)
+  rejectionReason  String?
+  respondedAt      DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  agreement Agreement?
+
+  @@index([unitId, status])
+  @@index([tenantId])
+  @@map("rental_requests")
+}
+
+model Agreement {
+  id                   String          @id @default(uuid()) @db.Uuid
+  referenceNo          String          @unique @db.VarChar(40)
+  unitId               String          @db.Uuid
+  unit                 Unit            @relation(fields: [unitId], references: [id])
+  propertyId           String          @db.Uuid
+  property             Property        @relation(fields: [propertyId], references: [id])
+  tenantId             String          @db.Uuid
+  tenant               User            @relation("AgreementTenant", fields: [tenantId], references: [id])
+  ownerId              String          @db.Uuid
+  owner                User            @relation("AgreementOwner", fields: [ownerId], references: [id])
+  rentalRequestId      String?         @unique @db.Uuid
+  rentalRequest        RentalRequest?  @relation(fields: [rentalRequestId], references: [id])
+  startDate            DateTime
+  endDate              DateTime
+  rentAmount           Decimal         @db.Decimal(12, 2)
+  depositAmount        Decimal         @default(0) @db.Decimal(12, 2)
+  currency             String          @default("ETB") @db.VarChar(3)
+  paymentDueDay        Int             @default(1)
+  specialTerms         String?
+  // Generated agreement text + SHA-256 hash. Immutable once signed (FR data-integrity).
+  content              String
+  contentHash          String          @db.VarChar(64)
+  status               AgreementStatus @default(PENDING_SIGNATURE)
+  ownerSignedAt        DateTime?
+  ownerSignature       String?         @db.VarChar(150)
+  tenantSignedAt       DateTime?
+  tenantSignature      String?         @db.VarChar(150)
+  tenantSignatureIp    String?         @db.VarChar(64)
+  signatureHash        String?         @db.VarChar(64)
+  documents            String[]        @default([])
+  renewedFromId        String?         @unique @db.Uuid
+  renewedFrom          Agreement?      @relation("AgreementRenewal", fields: [renewedFromId], references: [id])
+  renewedTo            Agreement?      @relation("AgreementRenewal")
+  terminatedAt         DateTime?
+  terminationReason    String?
+  expiryReminderSentAt DateTime?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  invoices   Invoice[]
+  payments   Payment[]
+  complaints Complaint[]
+
+  @@index([ownerId, status])
+  @@index([tenantId, status])
+  @@index([unitId, status])
+  @@map("agreements")
+}
+
+// ─────────────────────────────── Billing ───────────────────────────────
+
+model Invoice {
+  id             String        @id @default(uuid()) @db.Uuid
+  invoiceNo      String        @unique @db.VarChar(40)
+  agreementId    String        @db.Uuid
+  agreement      Agreement     @relation(fields: [agreementId], references: [id])
+  tenantId       String        @db.Uuid
+  tenant         User          @relation("InvoiceTenant", fields: [tenantId], references: [id])
+  ownerId        String        @db.Uuid
+  owner          User          @relation("InvoiceOwner", fields: [ownerId], references: [id])
+  propertyId     String        @db.Uuid
+  property       Property      @relation(fields: [propertyId], references: [id])
+  unitId         String        @db.Uuid
+  unit           Unit          @relation(fields: [unitId], references: [id])
+  type           InvoiceType   @default(RENT)
+  periodStart    DateTime
+  periodEnd      DateTime
+  dueDate        DateTime
+  amount         Decimal       @db.Decimal(12, 2)
+  amountPaid     Decimal       @default(0) @db.Decimal(12, 2)
+  currency       String        @default("ETB") @db.VarChar(3)
+  status         InvoiceStatus @default(UNPAID)
+  description    String?
+  reminderCount  Int           @default(0)
+  lastReminderAt DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  payments Payment[]
+
+  @@unique([agreementId, type, periodStart])
+  @@index([tenantId, status])
+  @@index([ownerId, status])
+  @@index([dueDate, status])
+  @@map("invoices")
+}
+
+model Payment {
+  id                 String              @id @default(uuid()) @db.Uuid
+  referenceNo        String              @unique @db.VarChar(40)
+  invoiceId          String?             @db.Uuid
+  invoice            Invoice?            @relation(fields: [invoiceId], references: [id])
+  agreementId        String              @db.Uuid
+  agreement          Agreement           @relation(fields: [agreementId], references: [id])
+  tenantId           String              @db.Uuid
+  tenant             User                @relation("PaymentTenant", fields: [tenantId], references: [id])
+  ownerId            String              @db.Uuid
+  owner              User                @relation("PaymentOwner", fields: [ownerId], references: [id])
+  propertyId         String              @db.Uuid
+  property           Property            @relation(fields: [propertyId], references: [id])
+  amount             Decimal             @db.Decimal(12, 2)
+  currency           String              @default("ETB") @db.VarChar(3)
+  method             PaymentMethod
+  status             PaymentStatus       @default(PENDING)
+  providerReference  String?             @db.VarChar(100)
+  bankName           String?             @db.VarChar(100)
+  receiptUrl         String?
+  checkoutUrl        String?
+  notes              String?
+  // Idempotency key so offline-queued client submissions are never double-recorded.
+  clientRef          String?             @unique @db.VarChar(100)
+  recordedById       String?             @db.Uuid
+  recordedBy         User?               @relation("PaymentRecordedBy", fields: [recordedById], references: [id])
+  confirmedById      String?             @db.Uuid
+  confirmedBy        User?               @relation("PaymentConfirmedBy", fields: [confirmedById], references: [id])
+  confirmationSource ConfirmationSource?
+  confirmedAt        DateTime?
+  failureReason      String?
+  payoutId           String?             @db.Uuid
+  payout             Payout?             @relation(fields: [payoutId], references: [id])
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@index([tenantId, status])
+  @@index([ownerId, status])
+  @@index([propertyId])
+  @@index([providerReference])
+  @@map("payments")
+}
+
+model Payout {
+  id             String       @id @default(uuid()) @db.Uuid
+  referenceNo    String       @unique @db.VarChar(40)
+  ownerId        String       @db.Uuid
+  owner          User         @relation(fields: [ownerId], references: [id])
+  periodStart    DateTime
+  periodEnd      DateTime
+  grossCollected Decimal      @db.Decimal(12, 2)
+  platformFee    Decimal      @db.Decimal(12, 2)
+  netAmount      Decimal      @db.Decimal(12, 2)
+  currency       String       @default("ETB") @db.VarChar(3)
+  status         PayoutStatus @default(PENDING)
+  method         PaymentMethod?
+  paidReference  String?      @db.VarChar(100)
+  paidAt         DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  payments Payment[]
+
+  @@index([ownerId, status])
+  @@map("payouts")
+}
+
+model Expense {
+  id           String          @id @default(uuid()) @db.Uuid
+  ownerId      String          @db.Uuid
+  owner        User            @relation(fields: [ownerId], references: [id])
+  propertyId   String          @db.Uuid
+  property     Property        @relation(fields: [propertyId], references: [id])
+  unitId       String?         @db.Uuid
+  unit         Unit?           @relation(fields: [unitId], references: [id])
+  workOrderId  String?         @unique @db.Uuid
+  workOrder    WorkOrder?      @relation(fields: [workOrderId], references: [id])
+  category     ExpenseCategory
+  amount       Decimal         @db.Decimal(12, 2)
+  description  String?
+  incurredOn   DateTime
+  recordedById String?         @db.Uuid
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@index([ownerId, incurredOn])
+  @@index([propertyId])
+  @@map("expenses")
+}
+
+// ─────────────────────────────── Maintenance & Complaints ───────────────────────────────
+
+model Complaint {
+  id               String            @id @default(uuid()) @db.Uuid
+  referenceNo      String            @unique @db.VarChar(40)
+  tenantId         String?           @db.Uuid
+  tenant           User?             @relation("ComplaintTenant", fields: [tenantId], references: [id])
+  ownerId          String            @db.Uuid
+  owner            User              @relation("ComplaintOwner", fields: [ownerId], references: [id])
+  propertyId       String            @db.Uuid
+  property         Property          @relation(fields: [propertyId], references: [id])
+  unitId           String?           @db.Uuid
+  unit             Unit?             @relation(fields: [unitId], references: [id])
+  agreementId      String?           @db.Uuid
+  agreement        Agreement?        @relation(fields: [agreementId], references: [id])
+  raisedById       String            @db.Uuid
+  category         ComplaintCategory
+  priority         Priority          @default(MEDIUM)
+  title            String            @db.VarChar(200)
+  description      String
+  photos           String[]          @default([])
+  status           ComplaintStatus   @default(OPEN)
+  escalationStatus EscalationStatus  @default(NONE)
+  escalatedAt      DateTime?
+  escalatedById    String?           @db.Uuid
+  escalationReason String?
+  adminResolution  String?
+  resolvedAt       DateTime?
+  clientRef        String?           @unique @db.VarChar(100)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  responses  ComplaintResponse[]
+  workOrders WorkOrder[]
+
+  @@index([ownerId, status])
+  @@index([tenantId])
+  @@index([escalationStatus])
+  @@map("complaints")
+}
+
+model ComplaintResponse {
+  id          String    @id @default(uuid()) @db.Uuid
+  complaintId String    @db.Uuid
+  complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  authorId    String    @db.Uuid
+  author      User      @relation(fields: [authorId], references: [id])
+  message     String
+  attachments String[]  @default([])
+  createdAt   DateTime  @default(now())
+
+  @@index([complaintId])
+  @@map("complaint_responses")
+}
+
+model Vendor {
+  id          String            @id @default(uuid()) @db.Uuid
+  ownerId     String            @db.Uuid
+  owner       User              @relation(fields: [ownerId], references: [id])
+  name        String            @db.VarChar(150)
+  serviceType VendorServiceType
+  phoneNumber String            @db.VarChar(20)
+  email       String?           @db.VarChar(150)
+  notes       String?
+  isActive    Boolean           @default(true)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  workOrders WorkOrder[]
+
+  @@index([ownerId])
+  @@map("vendors")
+}
+
+model WorkOrder {
+  id              String          @id @default(uuid()) @db.Uuid
+  referenceNo     String          @unique @db.VarChar(40)
+  ownerId         String          @db.Uuid
+  owner           User            @relation("WorkOrderOwner", fields: [ownerId], references: [id])
+  propertyId      String          @db.Uuid
+  property        Property        @relation(fields: [propertyId], references: [id])
+  unitId          String?         @db.Uuid
+  unit            Unit?           @relation(fields: [unitId], references: [id])
+  complaintId     String?         @db.Uuid
+  complaint       Complaint?      @relation(fields: [complaintId], references: [id])
+  vendorId        String?         @db.Uuid
+  vendor          Vendor?         @relation(fields: [vendorId], references: [id])
+  title           String          @db.VarChar(200)
+  description     String?
+  priority        Priority        @default(MEDIUM)
+  status          WorkOrderStatus @default(OPEN)
+  estimatedCost   Decimal?        @db.Decimal(12, 2)
+  actualCost      Decimal?        @db.Decimal(12, 2)
+  scheduledDate   DateTime?
+  completedAt     DateTime?
+  completionNotes String?
+  photos          String[]        @default([])
+  createdById     String          @db.Uuid
+  clientRef       String?         @unique @db.VarChar(100)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  expense Expense?
+
+  @@index([ownerId, status])
+  @@index([vendorId])
+  @@map("work_orders")
+}
+
+// ─────────────────────────────── Communication & Audit ───────────────────────────────
+
+model Notification {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String    @db.VarChar(60)
+  title     String    @db.VarChar(200)
+  body      String
+  data      Json?
+  channels  String[]  @default([])
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  actorId    String?  @db.Uuid
+  actor      User?    @relation(fields: [actorId], references: [id])
+  actorRole  String?  @db.VarChar(20)
+  action     String   @db.VarChar(80)
+  entityType String   @db.VarChar(60)
+  entityId   String?  @db.VarChar(64)
+  metadata   Json?
+  ipAddress  String?  @db.VarChar(64)
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
