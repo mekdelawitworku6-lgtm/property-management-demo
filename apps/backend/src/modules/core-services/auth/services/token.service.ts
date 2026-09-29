@@ -1,4 +1,5 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import type { User } from '@prisma/client';
@@ -23,7 +24,8 @@ export class TokenService {
 
   /** Issues an access + refresh pair and stores the refresh-token hash (rotation). */
   async issueTokens(user: Pick<User, 'id' | 'role' | 'sessionVersion'>): Promise<AuthTokens> {
-    const base = { sub: user.id, role: user.role, sv: user.sessionVersion };
+    // jti makes every token unique, so rotation revokes the previous refresh token even within the same second.
+    const base = { sub: user.id, role: user.role, sv: user.sessionVersion, jti: randomUUID() };
     const expiresIn = this.configService.get<string>('JWT_EXPIRES_IN', '1d');
     const accessToken = await this.jwtService.signAsync({ ...base, type: 'access' } satisfies JwtPayload, {
       secret: this.configService.get<string>('JWT_SECRET'),

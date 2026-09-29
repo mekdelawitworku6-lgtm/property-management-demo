@@ -10,6 +10,7 @@ export interface JwtPayload {
   role: string;
   sv: number; // session version — bumped on logout / password change / suspension
   type: 'access' | 'refresh';
+  jti?: string;
 }
 
 @Injectable()

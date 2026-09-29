@@ -18,9 +18,8 @@ docker compose logs -f backend
 
 ### Tests (inside the `tools` container)
 ```bash
-docker compose run --rm tools npm test              # unit tests (every service/util/controller function)
-docker compose run --rm tools npm run test:cov      # with coverage
-docker compose run --rm tools npm run test:e2e      # full flow against a real test database
+docker compose run --rm tools npm run test:e2e      # module suites: the real app against a real test database
+docker compose run --rm tools npm test              # fast unit tests (Prisma mocked)
 ```
 
 ### Database / Prisma
@@ -64,7 +63,8 @@ apps/backend/
 - Every route requires a JWT unless marked `@Public()`; restrict with `@Roles(...)`.
 - Owner-side scoping: use `resolveOwnerId` / `scopeWhere` from `common/utils/owner-scope.util.ts` (managers act for their owner).
 - Every transaction, agreement and complaint action is written with `AuditService.log(...)` (FR-ADM-04).
-- Each new function gets a unit test next to it (`*.spec.ts`, Prisma mocked via `src/test-utils/mocks.ts`).
+- Tests are module-level: each module has an e2e suite in `apps/backend/test/modules/` that proves the feature works end-to-end
+  (shared fixtures in `test/e2e-helpers.ts`). Add scenarios there when a module gains a feature.
 - Integrations default to mock mode (`TELEBIRR_MOCK=true`, `SMS_MOCK=true`) so the stack runs without credentials.
 
 ## Git workflow
