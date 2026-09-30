@@ -1,11 +1,13 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
+import { UserRole, ManagerPermission } from '@prisma/client';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import { Roles } from '../../../../common/decorators/roles.decorator';
+import { RequirePermissions } from '../../../../common/decorators/permissions.decorator';
+import { AuditRead } from '../../../../common/decorators/audit-read.decorator';
 import type { AuthUser } from '../../../../common/types/auth-user.type';
 import { TeamService } from '../services/team.service';
-import { CreateManagerDto, CreateTenantDto } from '../dto/create-account.dto';
+import { CreateManagerDto, CreateTenantDto, UpdateManagerPermissionsDto } from '../dto/create-account.dto';
 
 @ApiTags('Owner - Managers & Tenants')
 @ApiBearerAuth('access-token')
@@ -22,9 +24,20 @@ export class TeamController {
 
   @Get('managers')
   @Roles(UserRole.OWNER)
-  @ApiOperation({ summary: 'List my managers' })
+  @ApiOperation({ summary: 'List my managers and their permissions' })
   listManagers(@CurrentUser() user: AuthUser) {
     return this.teamService.listManagers(user);
+  }
+
+  @Patch('managers/:id/permissions')
+  @Roles(UserRole.OWNER)
+  @ApiOperation({ summary: 'Replace the capability grants of one of my staff accounts' })
+  setManagerPermissions(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateManagerPermissionsDto,
+  ) {
+    return this.teamService.setManagerPermissions(user, id, dto.permissions);
   }
 
   @Patch('managers/:id/deactivate')
@@ -41,6 +54,7 @@ export class TeamController {
 
   @Post('tenants')
   @Roles(UserRole.OWNER, UserRole.MANAGER)
+  @RequirePermissions(ManagerPermission.TENANT_MANAGE)
   @ApiOperation({ summary: 'Register a tenant (contact, ID, emergency contacts)' })
   createTenant(@CurrentUser() user: AuthUser, @Body() dto: CreateTenantDto) {
     return this.teamService.createTenant(user, dto);
@@ -48,6 +62,7 @@ export class TeamController {
 
   @Get('tenants/lookup')
   @Roles(UserRole.OWNER, UserRole.MANAGER)
+  @RequirePermissions(ManagerPermission.TENANT_VIEW)
   @ApiQuery({ name: 'phone', example: '0911223344' })
   @ApiOperation({ summary: 'Find a tenant account by phone number' })
   lookupTenant(@Query('phone') phone: string) {
@@ -56,6 +71,8 @@ export class TeamController {
 
   @Get('tenants')
   @Roles(UserRole.OWNER, UserRole.MANAGER)
+  @RequirePermissions(ManagerPermission.TENANT_VIEW)
+  @AuditRead('Tenant')
   @ApiQuery({ name: 'search', required: false })
   @ApiOperation({ summary: 'Tenants in my portfolio with outstanding balances' })
   listTenants(@CurrentUser() user: AuthUser, @Query('search') search?: string) {
@@ -64,6 +81,8 @@ export class TeamController {
 
   @Get('tenants/:id')
   @Roles(UserRole.OWNER, UserRole.MANAGER)
+  @RequirePermissions(ManagerPermission.TENANT_VIEW)
+  @AuditRead('Tenant')
   @ApiOperation({ summary: 'Tenant detail: agreements, invoices, payment history' })
   getTenant(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.teamService.getPortfolioTenant(user, id);

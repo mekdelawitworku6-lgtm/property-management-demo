@@ -1,9 +1,11 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
+import { ManagerPermission, UserRole } from '@prisma/client';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { Public } from '../../../common/decorators/public.decorator';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { RequirePermissions } from '../../../common/decorators/permissions.decorator';
+import { AuditRead } from '../../../common/decorators/audit-read.decorator';
 import { ResponseMessage } from '../../../common/decorators/response-message.decorator';
 import type { AuthUser } from '../../../common/types/auth-user.type';
 import { AgreementsService } from './agreements.service';
@@ -19,12 +21,15 @@ export class AgreementsController {
 
   @Post()
   @Roles(UserRole.OWNER, UserRole.MANAGER)
+  @RequirePermissions(ManagerPermission.AGREEMENT_MANAGE)
   @ApiOperation({ summary: 'Create a lease directly for an existing tenant' })
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateAgreementDto) {
     return this.agreementsService.createDirect(user, dto);
   }
 
   @Get()
+  @RequirePermissions(ManagerPermission.AGREEMENT_VIEW)
+  @AuditRead('Agreement')
   @ApiOperation({ summary: 'Tenant: my leases · Owner: portfolio agreements · Admin: all (FR-ADM-01)' })
   findAll(@CurrentUser() user: AuthUser, @Query() filter: AgreementFilterDto) {
     return this.agreementsService.findAll(user, filter);
@@ -38,6 +43,8 @@ export class AgreementsController {
   }
 
   @Get(':id')
+  @RequirePermissions(ManagerPermission.AGREEMENT_VIEW)
+  @AuditRead('Agreement')
   @ApiOperation({ summary: 'Full agreement text + integrity check' })
   findOne(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.agreementsService.findOne(user, id);
@@ -53,6 +60,7 @@ export class AgreementsController {
 
   @Post(':id/renew')
   @Roles(UserRole.OWNER, UserRole.MANAGER)
+  @RequirePermissions(ManagerPermission.AGREEMENT_MANAGE)
   @ApiOperation({ summary: 'Offer a renewal (new agreement for the tenant to sign)' })
   renew(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: RenewAgreementDto) {
     return this.agreementsService.renew(user, id, dto);
@@ -60,12 +68,14 @@ export class AgreementsController {
 
   @Post(':id/terminate')
   @Roles(UserRole.OWNER, UserRole.MANAGER, UserRole.ADMIN)
+  @RequirePermissions(ManagerPermission.AGREEMENT_MANAGE)
   terminate(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: TerminateAgreementDto) {
     return this.agreementsService.terminate(user, id, dto);
   }
 
   @Patch(':id/cancel')
   @Roles(UserRole.OWNER, UserRole.MANAGER, UserRole.TENANT)
+  @RequirePermissions(ManagerPermission.AGREEMENT_MANAGE)
   @ApiOperation({ summary: 'Withdraw / decline an unsigned agreement' })
   cancel(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.agreementsService.cancel(user, id);

@@ -1,9 +1,10 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { AgreementStatus, ApprovalStatus, Prisma, UserRole } from '@prisma/client';
+import { AgreementStatus, ApprovalStatus, ManagerPermission, Prisma, UserRole } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../../../database/prisma.service';
 import { AuditService } from '../../../../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../../../../common/constants/audit-actions.constants';
+import { ALL_MANAGER_PERMISSIONS } from '../../../../common/constants/manager-permissions.constants';
 import { hashPassword, isStrongPassword } from '../../../../common/utils/password.util';
 import { normalizeEthiopianPhone } from '../../../../common/utils/phone.util';
 import { requireOwnerId } from '../../../../common/utils/owner-scope.util';
@@ -51,10 +52,34 @@ export class TeamService {
         passwordHash: await hashPassword(dto.password),
         approvalStatus: ApprovalStatus.APPROVED,
         employerId: user.id,
+        permissions: { set: dto.permissions?.length ? [...new Set(dto.permissions)] : [...ALL_MANAGER_PERMISSIONS] },
       },
     });
-    await this.audit.log(AUDIT_ACTIONS.MANAGER_CREATED, 'User', manager.id, user);
+    await this.audit.log(AUDIT_ACTIONS.MANAGER_CREATED, 'User', manager.id, user, {
+      fullName: manager.fullName,
+      permissions: manager.permissions,
+    });
     return toPublicUser(manager);
+  }
+
+  /** Owner replaces the capability grants of one of their staff accounts. */
+  async setManagerPermissions(user: AuthUser, managerId: string, permissions: ManagerPermission[]) {
+    const manager = await this.prisma.user.findFirst({
+      where: { id: managerId, employerId: user.id, role: UserRole.MANAGER },
+    });
+    if (!manager) throw new NotFoundException('Manager not found');
+
+    const next = [...new Set(permissions)];
+    const updated = await this.prisma.user.update({
+      where: { id: managerId },
+      data: { permissions: { set: next } },
+    });
+    await this.audit.log(AUDIT_ACTIONS.MANAGER_PERMISSIONS_UPDATED, 'User', managerId, user, {
+      fullName: manager.fullName,
+      before: manager.permissions,
+      after: next,
+    });
+    return toPublicUser(updated);
   }
 
   async listManagers(user: AuthUser) {
@@ -83,6 +108,13 @@ export class TeamService {
             refreshTokenHash: null,
           },
     });
+    await this.audit.log(
+      active ? AUDIT_ACTIONS.MANAGER_REACTIVATED : AUDIT_ACTIONS.MANAGER_DEACTIVATED,
+      'User',
+      managerId,
+      user,
+      { fullName: manager.fullName },
+    );
     return toPublicUser(updated);
   }
 

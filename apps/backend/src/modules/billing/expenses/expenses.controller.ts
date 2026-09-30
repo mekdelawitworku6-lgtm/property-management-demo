@@ -1,8 +1,10 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
+import { ManagerPermission, UserRole } from '@prisma/client';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { RequirePermissions } from '../../../common/decorators/permissions.decorator';
+import { AuditRead } from '../../../common/decorators/audit-read.decorator';
 import type { AuthUser } from '../../../common/types/auth-user.type';
 import { ExpensesService } from './expenses.service';
 import { CreateExpenseDto, ExpenseFilterDto, UpdateExpenseDto } from './dto/expense.dto';
@@ -15,6 +17,7 @@ export class ExpensesController {
   constructor(private readonly expensesService: ExpensesService) {}
 
   @Post()
+  @RequirePermissions(ManagerPermission.PAYMENT_RECORD)
   @ApiOperation({ summary: 'Record a property expense' })
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateExpenseDto) {
     return this.expensesService.create(user, dto);
@@ -22,16 +25,20 @@ export class ExpensesController {
 
   @Get()
   @Roles(UserRole.OWNER, UserRole.MANAGER, UserRole.ADMIN)
+  @RequirePermissions(ManagerPermission.PAYMENT_VIEW)
+  @AuditRead('Expense')
   findAll(@CurrentUser() user: AuthUser, @Query() filter: ExpenseFilterDto) {
     return this.expensesService.findAll(user, filter);
   }
 
   @Patch(':id')
+  @RequirePermissions(ManagerPermission.PAYMENT_RECORD)
   update(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateExpenseDto) {
     return this.expensesService.update(user, id, dto);
   }
 
   @Delete(':id')
+  @RequirePermissions(ManagerPermission.PAYMENT_RECORD)
   remove(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.expensesService.remove(user, id);
   }

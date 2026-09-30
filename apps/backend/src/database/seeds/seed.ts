@@ -4,6 +4,7 @@
  */
 import { ApprovalStatus, Language, PrismaClient, PropertyType, UnitType, UserRole, VendorServiceType } from '@prisma/client';
 import { hashPassword } from '../../common/utils/password.util';
+import { ALL_MANAGER_PERMISSIONS } from '../../common/constants/manager-permissions.constants';
 
 export const SEED_PASSWORD = process.env.SEED_PASSWORD ?? 'Demo@12345';
 
@@ -16,9 +17,12 @@ export const SEED_USERS = [
 ] as const;
 
 async function upsertUser(prisma: PrismaClient, passwordHash: string, seed: (typeof SEED_USERS)[number], employerId?: string) {
+  // Demo staff gets every grant so the seeded manager account keeps working;
+  // owners restrict real staff through the "add staff" screen instead.
+  const isManager = seed.role === UserRole.MANAGER;
   return prisma.user.upsert({
     where: { phoneNumber: seed.phoneNumber },
-    update: {},
+    update: isManager ? { permissions: { set: [...ALL_MANAGER_PERMISSIONS] } } : {},
     create: {
       role: seed.role,
       fullName: seed.fullName,
@@ -29,6 +33,7 @@ async function upsertUser(prisma: PrismaClient, passwordHash: string, seed: (typ
       phoneVerified: true,
       language: seed.role === UserRole.TENANT ? Language.AM : Language.EN,
       employerId: employerId ?? null,
+      ...(isManager ? { permissions: { set: [...ALL_MANAGER_PERMISSIONS] } } : {}),
       ...(seed.role === UserRole.OWNER
         ? { ownerProfile: { create: { companyName: 'Kebede Properties PLC', payoutMethod: 'TELEBIRR', telebirrNumber: seed.phoneNumber } } }
         : {}),

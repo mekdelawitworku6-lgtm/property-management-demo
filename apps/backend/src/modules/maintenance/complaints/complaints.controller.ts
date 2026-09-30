@@ -1,8 +1,10 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
+import { UserRole, ManagerPermission } from '@prisma/client';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { RequirePermissions } from '../../../common/decorators/permissions.decorator';
+import { AuditRead } from '../../../common/decorators/audit-read.decorator';
 import type { AuthUser } from '../../../common/types/auth-user.type';
 import { ComplaintsService } from './complaints.service';
 import {
@@ -23,23 +25,28 @@ export class ComplaintsController {
   }
 
   @Get()
+  @AuditRead('Complaint')
   @ApiOperation({ summary: 'Tenant: mine · Owner: inbox · Admin: escalated or unresolved past SLA' })
   findAll(@CurrentUser() user: AuthUser, @Query() filter: ComplaintFilterDto) {
     return this.complaintsService.findAll(user, filter);
   }
 
   @Get(':id')
+  @AuditRead('Complaint')
   findOne(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.complaintsService.findOne(user, id);
   }
 
   @Patch(':id/status')
   @Roles(UserRole.TENANT, UserRole.OWNER, UserRole.MANAGER)
+  @RequirePermissions(ManagerPermission.COMPLAINT_MANAGE)
+  @ApiOperation({ summary: 'Move a complaint through its workflow' })
   updateStatus(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateComplaintStatusDto) {
     return this.complaintsService.updateStatus(user, id, dto);
   }
 
   @Post(':id/responses')
+  @RequirePermissions(ManagerPermission.COMPLAINT_VIEW)
   @ApiOperation({ summary: 'Reply on the complaint thread (FR-OWN-05)' })
   respond(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: RespondComplaintDto) {
     return this.complaintsService.respond(user, id, dto);
@@ -47,6 +54,7 @@ export class ComplaintsController {
 
   @Post(':id/escalate')
   @Roles(UserRole.TENANT, UserRole.OWNER, UserRole.MANAGER)
+  @RequirePermissions(ManagerPermission.COMPLAINT_MANAGE)
   @ApiOperation({ summary: 'Escalate to the platform admin (FR-OWN-05)' })
   escalate(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: EscalateComplaintDto) {
     return this.complaintsService.escalate(user, id, dto);

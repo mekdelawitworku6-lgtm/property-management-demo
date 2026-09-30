@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
-import { Language } from '@prisma/client';
+import { ArrayNotEmpty, IsArray, IsEmail, IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { Language, ManagerPermission } from '@prisma/client';
 import { UpdateTenantProfileDto } from './tenant-profile.dto';
 
 export class CreateManagerDto {
@@ -9,6 +9,16 @@ export class CreateManagerDto {
   @ApiPropertyOptional() @IsOptional() @IsEmail() email?: string;
   @ApiProperty({ example: 'Manager123' }) @IsString() @MinLength(8) password: string;
   @ApiPropertyOptional({ enum: Language }) @IsOptional() @IsEnum(Language) language?: Language;
+  @ApiPropertyOptional({ enum: ManagerPermission, isArray: true, description: 'Capability grants; all grants are applied when omitted' })
+  @IsOptional() @IsArray() @IsEnum(ManagerPermission, { each: true })
+  permissions?: ManagerPermission[];
+}
+
+/** Owner replaces the capability grants of an existing staff account. */
+export class UpdateManagerPermissionsDto {
+  @ApiProperty({ enum: ManagerPermission, isArray: true })
+  @IsArray() @ArrayNotEmpty() @IsEnum(ManagerPermission, { each: true })
+  permissions: ManagerPermission[];
 }
 
 /** Owner/manager registers a tenant (Section 4.1.2: contact details, ID information, emergency contacts). */

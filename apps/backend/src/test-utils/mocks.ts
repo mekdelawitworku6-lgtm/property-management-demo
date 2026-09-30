@@ -1,5 +1,6 @@
 import { mockDeep } from 'jest-mock-extended';
-import { Language, UserRole } from '@prisma/client';
+import { Language, ManagerPermission, UserRole } from '@prisma/client';
+import { ALL_MANAGER_PERMISSIONS } from '../common/constants/manager-permissions.constants';
 import type { AuthUser } from '../common/types/auth-user.type';
 
 /** Loosely typed on purpose: DeepMockProxy<PrismaClient> overwhelms the TS checker. */
@@ -40,6 +41,7 @@ function authUser(id: string, role: UserRole, extra: Partial<AuthUser> = {}): Au
     language: Language.EN,
     employerId: null,
     approvalStatus: 'APPROVED',
+    permissions: [],
     ip: '127.0.0.1',
     ...extra,
   };
@@ -47,7 +49,13 @@ function authUser(id: string, role: UserRole, extra: Partial<AuthUser> = {}): Au
 
 export const USERS = {
   owner: authUser(IDS.owner, UserRole.OWNER),
-  manager: authUser(IDS.manager, UserRole.MANAGER, { employerId: IDS.owner }),
+  // The shared manager fixture holds every grant, matching the seeded demo account.
+  manager: authUser(IDS.manager, UserRole.MANAGER, { employerId: IDS.owner, permissions: [...ALL_MANAGER_PERMISSIONS] }),
+  /** Same manager, stripped down to a read-only staff account. */
+  managerViewOnly: authUser(IDS.manager, UserRole.MANAGER, {
+    employerId: IDS.owner,
+    permissions: [ManagerPermission.PROPERTY_VIEW],
+  }),
   tenant: authUser(IDS.tenant, UserRole.TENANT),
   admin: authUser(IDS.admin, UserRole.ADMIN),
   telecom: authUser(IDS.telecom, UserRole.TELECOM),
@@ -55,7 +63,12 @@ export const USERS = {
 };
 
 export function mockAudit() {
-  return { log: jest.fn().mockResolvedValue(undefined), findAll: jest.fn(), findForEntity: jest.fn() };
+  return {
+    log: jest.fn().mockResolvedValue(undefined),
+    findAll: jest.fn(),
+    findForEntity: jest.fn(),
+    findForOwner: jest.fn(),
+  };
 }
 
 export function mockNotifications() {

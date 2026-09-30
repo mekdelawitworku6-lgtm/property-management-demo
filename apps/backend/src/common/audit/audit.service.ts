@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import type { AuthUser } from '../types/auth-user.type';
 import { buildPaginatedList, resolvePagination } from '../utils/paginated-list.util';
-import type { AuditAction } from '../constants/audit-actions.constants';
+import { AUDIT_ACTIONS, type AuditAction } from '../constants/audit-actions.constants';
 
 const SENSITIVE_KEYS = new Set(['password', 'passwordhash', 'otp', 'code', 'token', 'refreshtoken', 'idnumber', 'secret']);
 
@@ -34,6 +34,8 @@ export interface AuditLogFilter {
   actorId?: string;
   from?: string;
   to?: string;
+  /** Owner trail: set false to hide the read/view trail and show only real changes. */
+  includeViews?: boolean;
 }
 
 @Injectable()
@@ -80,6 +82,44 @@ export class AuditService {
         ...(filter.to ? { lte: new Date(filter.to) } : {}),
       };
     }
+    const [docs, total] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where,
+        skip,
+        take,
+        orderBy: { createdAt: 'desc' },
+        include: { actor: { select: { id: true, fullName: true, role: true, phoneNumber: true } } },
+      }),
+      this.prisma.auditLog.count({ where }),
+    ]);
+    return buildPaginatedList(docs, { page, limit, total });
+  }
+
+  /**
+   * Activity trail for one owner: everything done by the owner themselves or by
+   * the staff they employ. Owners cannot see any other account's activity.
+   */
+  async findForOwner(user: AuthUser, filter: AuditLogFilter = {}) {
+    const ownerId = user.role === 'OWNER' ? user.id : user.employerId;
+    if (!ownerId) return buildPaginatedList([], { page: 1, limit: filter.limit ?? 20, total: 0 });
+
+    const { page, limit, skip, take } = resolvePagination(filter.page, filter.limit);
+    const where: Prisma.AuditLogWhereInput = {
+      actor: { OR: [{ id: ownerId }, { employerId: ownerId }] },
+    };
+    if (filter.action) where.action = filter.action;
+    if (filter.entityType) where.entityType = filter.entityType;
+    if (filter.actorId) where.actorId = filter.actorId;
+    if (filter.includeViews === false) {
+      where.action = { not: AUDIT_ACTIONS.RECORD_VIEWED };
+    }
+    if (filter.from || filter.to) {
+      where.createdAt = {
+        ...(filter.from ? { gte: new Date(filter.from) } : {}),
+        ...(filter.to ? { lte: new Date(filter.to) } : {}),
+      };
+    }
+
     const [docs, total] = await Promise.all([
       this.prisma.auditLog.findMany({
         where,

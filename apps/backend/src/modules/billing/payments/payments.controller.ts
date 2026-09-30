@@ -1,11 +1,13 @@
 import { Body, Controller, Get, Header, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Query, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiExcludeEndpoint, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
-import { UserRole } from '@prisma/client';
+import { ManagerPermission, UserRole } from '@prisma/client';
 import type { Request } from 'express';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { Public } from '../../../common/decorators/public.decorator';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { RequirePermissions } from '../../../common/decorators/permissions.decorator';
+import { AuditRead } from '../../../common/decorators/audit-read.decorator';
 import type { AuthUser } from '../../../common/types/auth-user.type';
 import { PaymentsService } from './payments.service';
 import {
@@ -34,6 +36,7 @@ export class PaymentsController {
 
   @Post('offline')
   @Roles(UserRole.OWNER, UserRole.MANAGER)
+  @RequirePermissions(ManagerPermission.PAYMENT_RECORD)
   @ApiOperation({ summary: 'Log a cash payment / directly received bank transfer' })
   recordOffline(@CurrentUser() user: AuthUser, @Body() dto: RecordOfflinePaymentDto) {
     return this.paymentsService.recordOffline(user, dto);
@@ -58,18 +61,23 @@ export class PaymentsController {
   }
 
   @Get()
+  @RequirePermissions(ManagerPermission.PAYMENT_VIEW)
+  @AuditRead('Payment')
   @ApiOperation({ summary: 'Payment history (tenant / owner / platform-wide)' })
   findAll(@CurrentUser() user: AuthUser, @Query() filter: PaymentFilterDto) {
     return this.paymentsService.findAll(user, filter);
   }
 
   @Get(':id')
+  @RequirePermissions(ManagerPermission.PAYMENT_VIEW)
+  @AuditRead('Payment')
   findOne(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.paymentsService.findOne(user, id);
   }
 
   @Patch(':id/confirm')
   @Roles(UserRole.TELECOM, UserRole.ADMIN, UserRole.OWNER, UserRole.MANAGER)
+  @RequirePermissions(ManagerPermission.PAYMENT_RECORD)
   @ApiOperation({ summary: 'Confirm a pending payment (Ethio Telecom / admin; owner for bank transfers)' })
   confirm(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ConfirmPaymentDto) {
     return this.paymentsService.confirm(user, id, dto);
@@ -77,6 +85,7 @@ export class PaymentsController {
 
   @Patch(':id/reject')
   @Roles(UserRole.TELECOM, UserRole.ADMIN, UserRole.OWNER, UserRole.MANAGER)
+  @RequirePermissions(ManagerPermission.PAYMENT_RECORD)
   reject(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: RejectPaymentDto) {
     return this.paymentsService.reject(user, id, dto);
   }

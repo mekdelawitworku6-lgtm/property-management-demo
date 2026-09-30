@@ -9,6 +9,7 @@ import { DatabaseModule } from './database/database.module';
 import { AuditModule } from './common/audit/audit.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
+import { PermissionsGuard } from './common/guards/permissions.guard';
 
 // Core services
 import { AuthModule } from './modules/core-services/auth/auth.module';
@@ -61,10 +62,11 @@ import { AdminModule } from './modules/admin/admin.module';
     SchedulerModule,
   ],
   providers: [
-    // Order matters: throttle → authenticate → authorize by role.
+    // Order matters: throttle → authenticate → authorize by role → authorize by staff permission.
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
+    { provide: APP_GUARD, useClass: PermissionsGuard },
   ],
 })
 export class AppModule {}

@@ -27,6 +27,24 @@ enum ApprovalStatus {
   REJECTED
 }
 
+/// Per-capability grants for MANAGER accounts. Owners/admins bypass the check.
+enum ManagerPermission {
+  PROPERTY_VIEW
+  PROPERTY_MANAGE
+  UNIT_MANAGE
+  TENANT_VIEW
+  TENANT_MANAGE
+  AGREEMENT_VIEW
+  AGREEMENT_MANAGE
+  COMPLAINT_VIEW
+  COMPLAINT_MANAGE
+  PAYMENT_VIEW
+  PAYMENT_RECORD
+  VENDOR_VIEW
+  VENDOR_MANAGE
+  REPORT_VIEW
+}
+
 enum Language {
   EN
   AM
@@ -204,6 +222,8 @@ model User {
   employerId       String?        @db.Uuid
   employer         User?          @relation("OwnerManagers", fields: [employerId], references: [id])
   managers         User[]         @relation("OwnerManagers")
+  // Capability grants for MANAGER accounts. Empty means no owner-side access at all.
+  permissions      ManagerPermission[] @default([])
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 

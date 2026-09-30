@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsBoolean, IsDateString, IsOptional, IsString, IsUUID } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { PaginationDto } from '../../dto/pagination.dto';
 
 export class AuditLogFilterDto extends PaginationDto {
@@ -32,4 +33,13 @@ export class AuditLogFilterDto extends PaginationDto {
   @IsOptional()
   @IsDateString()
   to?: string;
+}
+
+/** Owner trail: same filters, plus the switch to hide read-only view entries. */
+export class OwnerAuditLogFilterDto extends AuditLogFilterDto {
+  @ApiPropertyOptional({ description: 'Set false to show only real changes and hide RECORD_VIEWED entries' })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'boolean' ? value : value === 'true'))
+  @IsBoolean()
+  includeViews?: boolean;
 }

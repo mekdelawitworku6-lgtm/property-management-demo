@@ -1,7 +1,8 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
+import { ManagerPermission, UserRole } from '@prisma/client';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
+import { RequirePermissions } from '../../../common/decorators/permissions.decorator';
 import { Roles } from '../../../common/decorators/roles.decorator';
 import type { AuthUser } from '../../../common/types/auth-user.type';
 import { RentalRequestsService } from './rental-requests.service';
@@ -40,6 +41,7 @@ export class RentalRequestsController {
 
   @Post(':id/accept')
   @Roles(UserRole.OWNER, UserRole.MANAGER)
+  @RequirePermissions(ManagerPermission.AGREEMENT_MANAGE)
   @ApiOperation({ summary: 'Accept → rental agreement generated for the tenant to sign' })
   accept(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() terms: LeaseTermsDto) {
     return this.rentalRequestsService.accept(user, id, terms);
@@ -47,6 +49,7 @@ export class RentalRequestsController {
 
   @Post(':id/reject')
   @Roles(UserRole.OWNER, UserRole.MANAGER)
+  @RequirePermissions(ManagerPermission.AGREEMENT_MANAGE)
   reject(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: RejectRentalRequestDto) {
     return this.rentalRequestsService.reject(user, id, dto);
   }

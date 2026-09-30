@@ -43,6 +43,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       language: user.language,
       employerId: user.employerId,
       approvalStatus: user.approvalStatus,
+      permissions: user.permissions,
       ip: req?.ip,
     };
   }
