@@ -59,6 +59,19 @@ describe('Staff accounts, permission grants and the owner activity trail (e2e)',
       await ctx.http().get(`${API}/managers`).set(ctx.auth('staff')).expect(403);
       await ctx.http().get(`${API}/managers`).set(ctx.auth('admin')).expect(403);
     });
+
+    // Regression: an explicit empty list used to be treated as "not provided"
+    // and handed the new account every permission, so picking "None" in the UI
+    // produced a full-power login.
+    it('grants nothing when the owner explicitly ticks no permissions', async () => {
+      const created = await ctx.http().post(`${API}/managers`).set(ctx.auth('owner'))
+        .send({ fullName: 'No Access Yet', phoneNumber: nextPhone(), password: 'Staff@1234', permissions: [] })
+        .expect(201);
+      expect(created.body.data.permissions).toEqual([]);
+
+      const list = await ctx.http().get(`${API}/managers`).set(ctx.auth('owner')).expect(200);
+      expect(list.body.data.find((m: any) => m.id === created.body.data.id).permissions).toEqual([]);
+    });
   });
 
   describe('permission grants are enforced', () => {
@@ -91,6 +104,31 @@ describe('Staff accounts, permission grants and the owner activity trail (e2e)',
         name: 'Blocked Tower', type: 'RESIDENTIAL', city: 'Addis Ababa', subCity: 'Bole', address: 'Bole Road',
       }).expect(403);
       await ctx.http().get(`${API}/properties`).set(ctx.auth('staff')).expect(200);
+    });
+
+    // Revoking everything is the supported way to lock an account out, so it
+    // has to be accepted by the API rather than rejected as invalid input.
+    it('the owner can revoke every grant, which locks the account out until access is restored', async () => {
+      const phone = nextPhone();
+      const created = await ctx.http().post(`${API}/managers`).set(ctx.auth('owner'))
+        .send({ fullName: 'Locked Out', phoneNumber: phone, password: 'Staff@1234', permissions: [ManagerPermission.PROPERTY_VIEW] })
+        .expect(201);
+      const id = created.body.data.id;
+      ctx.tokens.locked = await ctx.login(created.body.data.phoneNumber, 'Staff@1234');
+      await ctx.http().get(`${API}/properties`).set(ctx.auth('locked')).expect(200);
+
+      const res = await ctx.http().patch(`${API}/managers/${id}/permissions`).set(ctx.auth('owner'))
+        .send({ permissions: [] }).expect(200);
+      expect(res.body.data.permissions).toEqual([]);
+
+      // Signed in, but every gated route is refused.
+      await ctx.http().get(`${API}/properties`).set(ctx.auth('locked')).expect(403);
+      await ctx.http().get(`${API}/invoices`).set(ctx.auth('locked')).expect(403);
+
+      // Restoring one grant is enough to work again.
+      await ctx.http().patch(`${API}/managers/${id}/permissions`).set(ctx.auth('owner'))
+        .send({ permissions: [ManagerPermission.PROPERTY_VIEW] }).expect(200);
+      await ctx.http().get(`${API}/properties`).set(ctx.auth('locked')).expect(200);
     });
 
     it('cannot grant permissions to somebody else\'s staff', async () => {
@@ -141,7 +179,11 @@ describe('Staff accounts, permission grants and the owner activity trail (e2e)',
 
     it('never leaks another owner\'s activity or the platform-wide log', async () => {
       const res = await ctx.http().get(`${API}/owner/audit-logs?limit=100`).set(ctx.auth('owner')).expect(200);
-      const foreign = res.body.data.docs.filter((l: any) => l.actorId !== ownerId && l.actorId !== staffId && l.actorId !== readOnlyId);
+      // Derive the owner's real staff list rather than naming accounts, so a
+      // test that creates extra staff cannot make this pass or fail by luck.
+      const staffList = await ctx.http().get(`${API}/managers`).set(ctx.auth('owner')).expect(200);
+      const mine = new Set<string>([ownerId, ...staffList.body.data.map((m: any) => m.id as string)]);
+      const foreign = res.body.data.docs.filter((l: any) => !mine.has(l.actorId));
       expect(foreign).toHaveLength(0);
       await ctx.http().get(`${API}/owner/audit-logs`).set(ctx.auth('staff')).expect(403);
       await ctx.http().get(`${API}/owner/audit-logs`).set(ctx.auth('admin')).expect(403);

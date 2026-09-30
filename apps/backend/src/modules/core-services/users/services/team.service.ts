@@ -52,7 +52,11 @@ export class TeamService {
         passwordHash: await hashPassword(dto.password),
         approvalStatus: ApprovalStatus.APPROVED,
         employerId: user.id,
-        permissions: { set: dto.permissions?.length ? [...new Set(dto.permissions)] : [...ALL_MANAGER_PERMISSIONS] },
+        // An omitted list means the owner did not choose, so fall back to full
+        // access for compatibility. An explicitly empty list is a real choice
+        // ("grant nothing") and must stay empty: treating it as "not provided"
+        // would silently hand out every permission.
+        permissions: { set: dto.permissions ? [...new Set(dto.permissions)] : [...ALL_MANAGER_PERMISSIONS] },
       },
     });
     await this.audit.log(AUDIT_ACTIONS.MANAGER_CREATED, 'User', manager.id, user, {

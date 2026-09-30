@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ArrayNotEmpty, IsArray, IsEmail, IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsEmail, IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { Language, ManagerPermission } from '@prisma/client';
 import { UpdateTenantProfileDto } from './tenant-profile.dto';
 
@@ -9,15 +9,15 @@ export class CreateManagerDto {
   @ApiPropertyOptional() @IsOptional() @IsEmail() email?: string;
   @ApiProperty({ example: 'Manager123' }) @IsString() @MinLength(8) password: string;
   @ApiPropertyOptional({ enum: Language }) @IsOptional() @IsEnum(Language) language?: Language;
-  @ApiPropertyOptional({ enum: ManagerPermission, isArray: true, description: 'Capability grants; all grants are applied when omitted' })
+  @ApiPropertyOptional({ enum: ManagerPermission, isArray: true, description: 'Capability grants. All grants are applied when the field is omitted; an empty array grants nothing, which blocks every request.' })
   @IsOptional() @IsArray() @IsEnum(ManagerPermission, { each: true })
   permissions?: ManagerPermission[];
 }
 
 /** Owner replaces the capability grants of an existing staff account. */
 export class UpdateManagerPermissionsDto {
-  @ApiProperty({ enum: ManagerPermission, isArray: true })
-  @IsArray() @ArrayNotEmpty() @IsEnum(ManagerPermission, { each: true })
+  @ApiProperty({ enum: ManagerPermission, isArray: true, description: 'The full replacement list. An empty array revokes every grant, which blocks every request until grants are added back.' })
+  @IsArray() @IsEnum(ManagerPermission, { each: true })
   permissions: ManagerPermission[];
 }
 
