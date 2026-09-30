@@ -12,6 +12,10 @@ ENV DATABASE_URL=postgresql://postgres:postgres@postgres:5432/property_managemen
 # bind mount of ./apps/backend onto /app would otherwise shadow these.
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
+# The compose `tools` service runs as ${HOST_UID:-1000}:${HOST_GID:-1000}, and Docker
+# seeds a fresh named volume from this directory as root. Match the ownership so
+# `prisma generate` and `npm ci` can write into the mounted node_modules.
+RUN chown -R 1000:1000 /app/node_modules
 
 # ---- Build stage: install deps + generate Prisma client + compile TypeScript ----
 FROM base AS builder
