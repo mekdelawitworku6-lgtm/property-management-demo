@@ -41,6 +41,10 @@ const COMPLAINT_INCLUDE = {
   property: { select: { id: true, name: true } },
   unit: { select: { id: true, unitNumber: true } },
   tenant: { select: { id: true, fullName: true, phoneNumber: true } },
+  // `raisedBy` is who filed the report, which is not always the tenant: a manager
+  // can raise it on a tenant's behalf. Both names are needed for attribution.
+  raisedBy: { select: { id: true, fullName: true, role: true } },
+  escalatedBy: { select: { id: true, fullName: true, role: true } },
 } satisfies Prisma.ComplaintInclude;
 
 /** Complaint / maintenance report lifecycle (FR-TEN-05/06, FR-OWN-05, FR-ADM-03, Section 3.4.2, 4.1.4). */

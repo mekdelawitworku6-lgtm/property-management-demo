@@ -223,6 +223,8 @@ model User {
   payouts               Payout[]
   tenantComplaints      Complaint[]     @relation("ComplaintTenant")
   ownerComplaints       Complaint[]     @relation("ComplaintOwner")
+  complaintsRaised      Complaint[]     @relation("ComplaintRaisedBy")
+  complaintsEscalated   Complaint[]     @relation("ComplaintEscalatedBy")
   complaintResponses    ComplaintResponse[]
   vendors               Vendor[]
   workOrders            WorkOrder[]     @relation("WorkOrderOwner")
@@ -574,6 +576,9 @@ model Complaint {
   agreementId      String?           @db.Uuid
   agreement        Agreement?        @relation(fields: [agreementId], references: [id])
   raisedById       String            @db.Uuid
+  // The account that actually filed the report. Differs from `tenant` when a
+  // manager raises it on a tenant's behalf, so the UI can attribute it correctly.
+  raisedBy         User              @relation("ComplaintRaisedBy", fields: [raisedById], references: [id])
   category         ComplaintCategory
   priority         Priority          @default(MEDIUM)
   title            String            @db.VarChar(200)
@@ -583,6 +588,7 @@ model Complaint {
   escalationStatus EscalationStatus  @default(NONE)
   escalatedAt      DateTime?
   escalatedById    String?           @db.Uuid
+  escalatedBy      User?             @relation("ComplaintEscalatedBy", fields: [escalatedById], references: [id])
   escalationReason String?
   adminResolution  String?
   resolvedAt       DateTime?
