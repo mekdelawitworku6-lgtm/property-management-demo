@@ -7,6 +7,11 @@ WORKDIR /app
 # ---- Dev/tooling stage: used via `docker compose run --rm tools ...` (tests, migrations) ----
 FROM base AS dev
 ENV DATABASE_URL=postgresql://postgres:postgres@postgres:5432/property_management
+# Deps are baked in so tooling uses the pinned versions (prisma 6.x, not 7.x).
+# The compose `tools` service mounts a volume over /app/node_modules, because its
+# bind mount of ./apps/backend onto /app would otherwise shadow these.
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 
 # ---- Build stage: install deps + generate Prisma client + compile TypeScript ----
 FROM base AS builder
