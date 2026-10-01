@@ -25,3 +25,19 @@ export class KycDecisionDto {
   @IsIn([KycStatus.VERIFIED, KycStatus.REJECTED])
   status: KycStatus;
 }
+
+export class AdminStaffFilterDto extends PaginationDto {
+  @ApiPropertyOptional({ description: 'Staff name, phone or email' })
+  @IsOptional()
+  @IsString()
+  search?: string;
+  @ApiPropertyOptional({ description: 'Only staff employed by this owner' })
+  @IsOptional()
+  @IsString()
+  ownerId?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  isSuspended?: boolean;
+}

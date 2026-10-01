@@ -7,7 +7,7 @@ import { AUDIT_ACTIONS } from '../../../../common/constants/audit-actions.consta
 import { ALL_MANAGER_PERMISSIONS } from '../../../../common/constants/manager-permissions.constants';
 import { hashPassword, isStrongPassword } from '../../../../common/utils/password.util';
 import { normalizeEthiopianPhone } from '../../../../common/utils/phone.util';
-import { requireOwnerId } from '../../../../common/utils/owner-scope.util';
+import { isPlatformStaff, requireOwnerId } from '../../../../common/utils/owner-scope.util';
 import { sumMoney, toNumber } from '../../../../common/utils/money.util';
 import type { AuthUser } from '../../../../common/types/auth-user.type';
 import { toPublicUser } from '../../auth/utils/auth-user.util';
@@ -32,8 +32,46 @@ export class TeamService {
     if (existing) throw new ConflictException('An account with this phone number or email already exists');
   }
 
-  async createManager(user: AuthUser, dto: CreateManagerDto) {
-    if (user.role !== UserRole.OWNER) throw new ForbiddenException('Only owners can add managers');
+  /**
+   * Resolves whose portfolio a *new* staff account belongs to. An owner can only
+   * ever act on their own staff; platform staff must name the owner, because an
+   * admin manages every owner's portfolio and the account has to be attributed
+   * to one of them.
+   */
+  private async resolveEmployerId(actor: AuthUser, ownerId?: string): Promise<string> {
+    if (actor.role === UserRole.OWNER) return actor.id;
+    if (!isPlatformStaff(actor)) throw new ForbiddenException('Not allowed to manage staff accounts');
+    if (!ownerId) throw new BadRequestException('ownerId is required when managing staff as platform staff');
+    const owner = await this.prisma.user.findFirst({ where: { id: ownerId, role: UserRole.OWNER } });
+    if (!owner) throw new NotFoundException('Owner not found');
+    return owner.id;
+  }
+
+  /**
+   * Loads the staff account an update targets. An owner may only reach their own
+   * staff; platform staff may reach any, because the account already records the
+   * owner it works for, so no owner has to be named for an update.
+   */
+  private async findManagedManager(actor: AuthUser, managerId: string, ownerId?: string) {
+    const where: Prisma.UserWhereInput = {
+      id: managerId,
+      role: UserRole.MANAGER,
+      ...(actor.role === UserRole.OWNER
+        ? { employerId: actor.id }
+        : ownerId
+          ? { employerId: ownerId }
+          : {}),
+    };
+    if (actor.role !== UserRole.OWNER && !isPlatformStaff(actor)) {
+      throw new ForbiddenException('Not allowed to manage staff accounts');
+    }
+    const manager = await this.prisma.user.findFirst({ where });
+    if (!manager) throw new NotFoundException('Manager not found');
+    return manager;
+  }
+
+  async createManager(user: AuthUser, dto: CreateManagerDto, ownerId?: string) {
+    const employerId = await this.resolveEmployerId(user, ownerId);
     if (!isStrongPassword(dto.password)) {
       throw new BadRequestException('Password must be at least 8 characters and contain a letter and a digit');
     }
@@ -51,7 +89,7 @@ export class TeamService {
         language: dto.language,
         passwordHash: await hashPassword(dto.password),
         approvalStatus: ApprovalStatus.APPROVED,
-        employerId: user.id,
+        employerId,
         // An omitted list means the owner did not choose, so fall back to full
         // access for compatibility. An explicitly empty list is a real choice
         // ("grant nothing") and must stay empty: treating it as "not provided"
@@ -62,16 +100,14 @@ export class TeamService {
     await this.audit.log(AUDIT_ACTIONS.MANAGER_CREATED, 'User', manager.id, user, {
       fullName: manager.fullName,
       permissions: manager.permissions,
+      employerId,
     });
     return toPublicUser(manager);
   }
 
-  /** Owner replaces the capability grants of one of their staff accounts. */
+  /** Owner (or platform staff) replaces the capability grants of a staff account. */
   async setManagerPermissions(user: AuthUser, managerId: string, permissions: ManagerPermission[]) {
-    const manager = await this.prisma.user.findFirst({
-      where: { id: managerId, employerId: user.id, role: UserRole.MANAGER },
-    });
-    if (!manager) throw new NotFoundException('Manager not found');
+    const manager = await this.findManagedManager(user, managerId);
 
     const next = [...new Set(permissions)];
     const updated = await this.prisma.user.update({
@@ -82,6 +118,7 @@ export class TeamService {
       fullName: manager.fullName,
       before: manager.permissions,
       after: next,
+      employerId: manager.employerId,
     });
     return toPublicUser(updated);
   }
@@ -94,19 +131,51 @@ export class TeamService {
     return managers.map(toPublicUser);
   }
 
-  /** Owner deactivates / re-activates a manager account. */
+  /**
+   * Every staff account on the platform, with the owner each one works for.
+   * Used by the admin staff screen, which is deliberately not owner-scoped.
+   */
+  async listAllManagers(filter: { search?: string; ownerId?: string; isSuspended?: boolean; skip: number; take: number }) {
+    const where: Prisma.UserWhereInput = {
+      role: UserRole.MANAGER,
+      ...(filter.ownerId ? { employerId: filter.ownerId } : {}),
+      ...(filter.isSuspended !== undefined ? { isSuspended: filter.isSuspended } : {}),
+      ...(filter.search
+        ? {
+            OR: [
+              { fullName: { contains: filter.search, mode: 'insensitive' } },
+              { phoneNumber: { contains: filter.search } },
+              { email: { contains: filter.search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+    const [managers, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        skip: filter.skip,
+        take: filter.take,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          employer: { select: { id: true, fullName: true, ownerProfile: { select: { companyName: true } } } },
+        },
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+    return { total, docs: managers.map(toPublicUser) };
+  }
+
+  /** Owner (or platform staff) deactivates / re-activates a staff account. */
   async setManagerActive(user: AuthUser, managerId: string, active: boolean) {
-    const manager = await this.prisma.user.findFirst({
-      where: { id: managerId, employerId: user.id, role: UserRole.MANAGER },
-    });
-    if (!manager) throw new NotFoundException('Manager not found');
+    const manager = await this.findManagedManager(user, managerId);
+    const actor = user.role === UserRole.OWNER ? 'owner' : 'platform staff';
     const updated = await this.prisma.user.update({
       where: { id: managerId },
       data: active
         ? { isSuspended: false, suspendedReason: null, suspendedAt: null }
         : {
             isSuspended: true,
-            suspendedReason: 'Deactivated by owner',
+            suspendedReason: `Deactivated by ${actor}`,
             suspendedAt: new Date(),
             sessionVersion: { increment: 1 },
             refreshTokenHash: null,
@@ -117,7 +186,7 @@ export class TeamService {
       'User',
       managerId,
       user,
-      { fullName: manager.fullName },
+      { fullName: manager.fullName, employerId: manager.employerId },
     );
     return toPublicUser(updated);
   }

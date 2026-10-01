@@ -98,14 +98,27 @@ export class AuditService {
   /**
    * Activity trail for one owner: everything done by the owner themselves or by
    * the staff they employ. Owners cannot see any other account's activity.
+   *
+   * Platform staff can also manage an owner's staff, and the owner must see
+   * that: an entry is included when it *touches* one of their staff accounts
+   * even if the actor is a platform admin, otherwise the platform could quietly
+   * revoke a grant and the owner would have no way of knowing.
    */
   async findForOwner(user: AuthUser, filter: AuditLogFilter = {}) {
     const ownerId = user.role === 'OWNER' ? user.id : user.employerId;
     if (!ownerId) return buildPaginatedList([], { page: 1, limit: filter.limit ?? 20, total: 0 });
 
+    const staff = await this.prisma.user.findMany({
+      where: { employerId: ownerId, role: 'MANAGER' },
+      select: { id: true },
+    });
+
     const { page, limit, skip, take } = resolvePagination(filter.page, filter.limit);
     const where: Prisma.AuditLogWhereInput = {
-      actor: { OR: [{ id: ownerId }, { employerId: ownerId }] },
+      OR: [
+        { actor: { OR: [{ id: ownerId }, { employerId: ownerId }] } },
+        { entityType: 'User', entityId: { in: staff.map((s) => s.id) } },
+      ],
     };
     if (filter.action) where.action = filter.action;
     if (filter.entityType) where.entityType = filter.entityType;

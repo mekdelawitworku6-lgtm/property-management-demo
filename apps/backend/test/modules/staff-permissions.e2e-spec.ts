@@ -56,8 +56,10 @@ describe('Staff accounts, permission grants and the owner activity trail (e2e)',
     });
 
     it('lets only the owner manage staff', async () => {
+      // Staff and tenants never manage staff; platform staff use /admin/managers.
       await ctx.http().get(`${API}/managers`).set(ctx.auth('staff')).expect(403);
       await ctx.http().get(`${API}/managers`).set(ctx.auth('admin')).expect(403);
+      await ctx.http().get(`${API}/managers`).set(ctx.auth('telecom')).expect(403);
     });
 
     // Regression: an explicit empty list used to be treated as "not provided"
@@ -151,6 +153,91 @@ describe('Staff accounts, permission grants and the owner activity trail (e2e)',
     });
   });
 
+  describe('platform staff management', () => {
+    const ADMIN = `${API}/admin/managers`;
+    let otherOwnerId: string;
+    let adminCreatedId: string;
+
+    beforeAll(async () => {
+      otherOwnerId = (await createOwnerWithUnit(ctx, 'ownerAdmin')).ownerId;
+    });
+
+    it('lists staff across every owner, each labelled with its employer', async () => {
+      const res = await ctx.http().get(ADMIN).set(ctx.auth('admin')).expect(200);
+      const mine = res.body.data.docs.find((m: any) => m.id === staffId);
+      expect(mine.employerId).toBe(ownerId);
+
+      const other = await ctx.http().get(`${ADMIN}?ownerId=${otherOwnerId}`).set(ctx.auth('admin')).expect(200);
+      expect(other.body.data.docs.every((m: any) => m.employerId === otherOwnerId)).toBe(true);
+    });
+
+    it('only the platform admin may use it', async () => {
+      await ctx.http().get(ADMIN).set(ctx.auth('telecom')).expect(403);
+      await ctx.http().get(ADMIN).set(ctx.auth('owner')).expect(403);
+      await ctx.http().get(ADMIN).set(ctx.auth('staff')).expect(403);
+      await ctx.http().get(ADMIN).expect(401);
+    });
+
+    it('creates a staff account on an owner\'s behalf, and the grants are enforced', async () => {
+      const created = await ctx.http().post(ADMIN).set(ctx.auth('admin')).send({
+        ownerId,
+        fullName: 'Admin Appointed',
+        phoneNumber: nextPhone(),
+        password: 'Staff@1234',
+        permissions: [ManagerPermission.PROPERTY_VIEW],
+      }).expect(201);
+      adminCreatedId = created.body.data.id;
+      expect(created.body.data.employerId).toBe(ownerId);
+      expect(created.body.data.permissions).toEqual([ManagerPermission.PROPERTY_VIEW]);
+
+      ctx.tokens.appointed = await ctx.login(created.body.data.phoneNumber, 'Staff@1234');
+      await ctx.http().get(`${API}/properties`).set(ctx.auth('appointed')).expect(200);
+      await ctx.http().get(`${API}/invoices`).set(ctx.auth('appointed')).expect(403);
+    });
+
+    it('requires the owner to be named, and refuses an unknown one', async () => {
+      const body = { fullName: 'No Owner', phoneNumber: nextPhone(), password: 'Staff@1234' };
+      await ctx.http().post(ADMIN).set(ctx.auth('admin')).send(body).expect(400);
+      await ctx.http().post(ADMIN).set(ctx.auth('admin'))
+        .send({ ...body, ownerId: '00000000-0000-4000-8000-000000000000' }).expect(404);
+    });
+
+    it('the admin can change and deactivate any owner\'s staff', async () => {
+      const res = await ctx.http().patch(`${ADMIN}/${adminCreatedId}/permissions`).set(ctx.auth('admin'))
+        .send({ permissions: [] }).expect(200);
+      expect(res.body.data.permissions).toEqual([]);
+      // The grant change applies on the next request, as it does for owners.
+      await ctx.http().get(`${API}/properties`).set(ctx.auth('appointed')).expect(403);
+
+      await ctx.http().patch(`${ADMIN}/${adminCreatedId}/activate`).set(ctx.auth('admin')).expect(200);
+      await ctx.http().patch(`${ADMIN}/${adminCreatedId}/deactivate`).set(ctx.auth('admin')).expect(200);
+      // Deactivation ends the session rather than waiting for a new login.
+      await ctx.http().get(`${API}/properties`).set(ctx.auth('appointed')).expect(401);
+    });
+
+    // Without this, the platform could revoke an owner's grants silently.
+    it('the owner sees, in their own trail, what the platform did to their staff', async () => {
+      const res = await ctx.http().get(`${API}/owner/audit-logs?limit=100`).set(ctx.auth('owner')).expect(200);
+      const onMyStaff = res.body.data.docs.filter(
+        (l: any) => l.entityId === adminCreatedId && l.actorRole === 'ADMIN',
+      );
+      expect(onMyStaff.length).toBeGreaterThan(0);
+      expect(onMyStaff.map((l: any) => l.action)).toEqual(
+        expect.arrayContaining(['MANAGER_CREATED', 'MANAGER_PERMISSIONS_UPDATED', 'MANAGER_DEACTIVATED']),
+      );
+    });
+
+    it('an admin change to one owner does not surface in another owner\'s trail', async () => {
+      await createOwnerWithUnit(ctx, 'ownerIsolated');
+      // The staff account belongs to the first owner, so it shows in their trail...
+      const mine = await ctx.http().get(`${API}/owner/audit-logs?limit=100`).set(ctx.auth('owner')).expect(200);
+      expect(mine.body.data.docs.some((l: any) => l.entityId === adminCreatedId)).toBe(true);
+      // ...and must not leak into an unrelated owner's.
+      const theirs = await ctx.http().get(`${API}/owner/audit-logs?limit=100`).set(ctx.auth('ownerIsolated')).expect(200);
+      expect(theirs.body.data.docs.every((l: any) => l.entityId !== adminCreatedId)).toBe(true);
+    });
+  });
+
   describe('owner activity trail', () => {
     it('shows the actions the owner and their staff performed', async () => {
       const res = await ctx.http().get(`${API}/owner/audit-logs`).set(ctx.auth('owner')).expect(200);
@@ -182,8 +269,13 @@ describe('Staff accounts, permission grants and the owner activity trail (e2e)',
       // Derive the owner's real staff list rather than naming accounts, so a
       // test that creates extra staff cannot make this pass or fail by luck.
       const staffList = await ctx.http().get(`${API}/managers`).set(ctx.auth('owner')).expect(200);
-      const mine = new Set<string>([ownerId, ...staffList.body.data.map((m: any) => m.id as string)]);
-      const foreign = res.body.data.docs.filter((l: any) => !mine.has(l.actorId));
+      const staffIds: string[] = staffList.body.data.map((m: any) => m.id as string);
+      const actors = new Set<string>([ownerId, ...staffIds]);
+      // Entries the owner must see: their own actions, their staff's actions, and
+      // anything a platform admin did *to their staff*.
+      const foreign = res.body.data.docs.filter(
+        (l: any) => !actors.has(l.actorId) && !(l.entityType === 'User' && staffIds.includes(l.entityId)),
+      );
       expect(foreign).toHaveLength(0);
       await ctx.http().get(`${API}/owner/audit-logs`).set(ctx.auth('staff')).expect(403);
       await ctx.http().get(`${API}/owner/audit-logs`).set(ctx.auth('admin')).expect(403);

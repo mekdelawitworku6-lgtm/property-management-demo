@@ -21,6 +21,17 @@ export class UpdateManagerPermissionsDto {
   permissions: ManagerPermission[];
 }
 
+/**
+ * Platform staff creating a staff account on behalf of an owner. The owner is
+ * named explicitly because an admin manages every owner's portfolio, so the
+ * new account has to be attributed to one of them.
+ */
+export class CreateManagerForOwnerDto extends CreateManagerDto {
+  @ApiProperty({ description: 'The owner this staff account works for' })
+  @IsString() @MinLength(1)
+  ownerId: string;
+}
+
 /** Owner/manager registers a tenant (Section 4.1.2: contact details, ID information, emergency contacts). */
 export class CreateTenantDto extends UpdateTenantProfileDto {
   @ApiProperty({ example: 'Meron Tadesse' }) @IsString() @MinLength(2) @MaxLength(150) fullName: string;
