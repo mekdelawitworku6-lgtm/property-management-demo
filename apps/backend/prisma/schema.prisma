@@ -102,6 +102,24 @@ enum AgreementStatus {
   CANCELLED
 }
 
+enum InspectionType {
+  MOVE_IN
+  MOVE_OUT
+}
+
+enum InspectionStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+enum DepositRefundStatus {
+  PENDING
+  APPROVED
+  PAID
+  REJECTED
+}
+
 enum InvoiceType {
   RENT
   DEPOSIT
@@ -248,6 +266,13 @@ model User {
   complaintResponses    ComplaintResponse[]
   vendors               Vendor[]
   workOrders            WorkOrder[]     @relation("WorkOrderOwner")
+  ownerInspections      Inspection[]    @relation("InspectionOwner")
+  tenantInspections     Inspection[]    @relation("InspectionTenant")
+  conductedInspections  Inspection[]    @relation("InspectionConductedBy")
+  ownerDepositRefunds   DepositRefund[] @relation("RefundOwner")
+  tenantDepositRefunds  DepositRefund[] @relation("RefundTenant")
+  refundsCreated        DepositRefund[] @relation("RefundCreatedBy")
+  refundsApproved       DepositRefund[] @relation("RefundApprovedBy")
   expenses              Expense[]
   notifications         Notification[]
   auditLogs             AuditLog[]
@@ -448,6 +473,8 @@ model Agreement {
   invoices   Invoice[]
   payments   Payment[]
   complaints Complaint[]
+  inspections Inspection[]
+  depositRefund DepositRefund?
   lateFeeRules LateFeeRule[] @relation("LateFeeAgreement")
 
   @@index([ownerId, status])
@@ -814,4 +841,68 @@ model LateFeeRule {
   @@index([ownerId, isActive])
   @@index([agreementId])
   @@map("late_fee_rules")
+}
+
+model Inspection {
+  id             String           @id @default(uuid()) @db.Uuid
+  referenceNo    String           @unique @db.VarChar(40)
+  agreementId    String           @db.Uuid
+  agreement      Agreement        @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+  propertyId     String           @db.Uuid
+  unitId         String           @db.Uuid
+  ownerId        String           @db.Uuid
+  owner          User             @relation("InspectionOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  tenantId       String           @db.Uuid
+  tenant         User             @relation("InspectionTenant", fields: [tenantId], references: [id], onDelete: Cascade)
+  type           InspectionType
+  status         InspectionStatus @default(SCHEDULED)
+  scheduledAt    DateTime?
+  completedAt    DateTime?
+  conductedById  String?          @db.Uuid
+  conductedBy    User?            @relation("InspectionConductedBy", fields: [conductedById], references: [id], onDelete: Set Null)
+  items          Json?
+  photos         String[]         @default([])
+  notes          String?
+  clientRef      String?          @unique @db.VarChar(100)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  depositRefunds DepositRefund[]
+
+  @@index([ownerId, status])
+  @@index([agreementId, type])
+  @@map("inspections")
+}
+
+model DepositRefund {
+  id               String              @id @default(uuid()) @db.Uuid
+  referenceNo      String              @unique @db.VarChar(40)
+  agreementId      String              @unique @db.Uuid
+  agreement        Agreement           @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+  propertyId       String              @db.Uuid
+  unitId           String              @db.Uuid
+  ownerId          String              @db.Uuid
+  owner            User                @relation("RefundOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  tenantId         String              @db.Uuid
+  tenant           User                @relation("RefundTenant", fields: [tenantId], references: [id], onDelete: Cascade)
+  inspectionId     String?             @db.Uuid
+  inspection       Inspection?         @relation(fields: [inspectionId], references: [id], onDelete: Set Null)
+  depositAmount    Decimal             @db.Decimal(12, 2)
+  deductions       Decimal             @default(0) @db.Decimal(12, 2)
+  refundAmount     Decimal             @db.Decimal(12, 2)
+  status           DepositRefundStatus @default(PENDING)
+  notes            String?
+  providerReference String?            @db.VarChar(100)
+  createdById      String              @db.Uuid
+  createdBy        User                @relation("RefundCreatedBy", fields: [createdById], references: [id])
+  approvedById     String?             @db.Uuid
+  approvedBy       User?               @relation("RefundApprovedBy", fields: [approvedById], references: [id], onDelete: Set Null)
+  paidAt           DateTime?
+  clientRef        String?             @unique @db.VarChar(100)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@index([ownerId, status])
+  @@index([tenantId])
+  @@map("deposit_refunds")
 }

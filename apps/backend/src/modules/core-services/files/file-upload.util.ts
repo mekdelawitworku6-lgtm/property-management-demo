@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto';
 import { extname } from 'path';
 
 export const UPLOAD_ROOT = 'uploads';
-export const UPLOAD_FOLDERS = ['properties', 'units', 'complaints', 'agreements', 'receipts', 'work-orders', 'kyc'] as const;
+export const UPLOAD_FOLDERS = ['properties', 'units', 'complaints', 'agreements', 'receipts', 'work-orders', 'kyc', 'inspections'] as const;
 export type UploadFolder = (typeof UPLOAD_FOLDERS)[number];
 export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 export const MAX_FILES_PER_REQUEST = 10;

@@ -30,6 +30,8 @@ export const IDS = {
   payment: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
   complaint: 'ffffffff-ffff-ffff-ffff-ffffffffffff',
   request: '77777777-7777-7777-7777-777777777777',
+  inspection: '99999999-9999-9999-9999-999999999999',
+  depositRefund: '12121212-1212-1212-1212-121212121212',
 };
 
 function authUser(id: string, role: UserRole, extra: Partial<AuthUser> = {}): AuthUser {

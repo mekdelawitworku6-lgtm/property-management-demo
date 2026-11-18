@@ -7,6 +7,8 @@ export const REALTIME_EVENTS = {
   PAYMENT_UPDATED: 'payment.updated',
   COMPLAINT_UPDATED: 'complaint.updated',
   WORK_ORDER_UPDATED: 'work-order.updated',
+  INSPECTION_UPDATED: 'inspection.updated',
+  DEPOSIT_REFUND_UPDATED: 'deposit-refund.updated',
   UNIT_UPDATED: 'unit.updated',
 } as const;
 

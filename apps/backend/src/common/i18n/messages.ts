@@ -113,6 +113,26 @@ export const MESSAGES = {
     EN: { title: 'Maintenance update', body: 'Work order {reference} is now {status}.' },
     AM: { title: 'የጥገና ሁኔታ', body: 'የሥራ ትዕዛዝ {reference} አሁን {status} ነው።' },
   },
+  INSPECTION_SCHEDULED: {
+    EN: { title: 'Inspection scheduled', body: 'Your {type} inspection for {unit} (ref {reference}) is scheduled for {date}.' },
+    AM: { title: 'ፍተሻ ታቅዷል', body: 'ለ{unit} የሚደረገው የ{type} ፍተሻ (ማጣቀሻ {reference}) በ{date} ታቅዷል።' },
+  },
+  INSPECTION_COMPLETED: {
+    EN: { title: 'Inspection completed', body: 'Your {type} inspection for {unit} (ref {reference}) has been completed.' },
+    AM: { title: 'ፍተሻው ተጠናቀቀ', body: 'ለ{unit} የሚደረገው የ{type} ፍተሻ (ማጣቀሻ {reference}) ተጠናቀቀ።' },
+  },
+  DEPOSIT_REFUND_APPROVED: {
+    EN: { title: 'Deposit refund approved', body: 'Your deposit refund of {amount} ETB (ref {reference}) has been approved.' },
+    AM: { title: 'የተቀማጭ ገንዘብ ተመላሽ ፀድቋል', body: 'የ{amount} ብር ተመላሽ ገንዘብዎ (ማጣቀሻ {reference}) ፀድቋል።' },
+  },
+  DEPOSIT_REFUND_PAID: {
+    EN: { title: 'Deposit refund paid', body: 'Your deposit refund of {amount} ETB (ref {reference}) has been paid.' },
+    AM: { title: 'የተቀማጭ ገንዘብ ተመላሽ ተከፍሏል', body: 'የ{amount} ብር ተመላሽ ገንዘብዎ (ማጣቀሻ {reference}) ተከፍሏል።' },
+  },
+  DEPOSIT_REFUND_REJECTED: {
+    EN: { title: 'Deposit refund rejected', body: 'Your deposit refund (ref {reference}) was rejected: {reason}' },
+    AM: { title: 'የተቀማጭ ገንዘብ ተመላሽ ውድቅ ሆኗል', body: 'የተመላሽ ገንዘብዎ (ማጣቀሻ {reference}) ውድቅ ሆኗል፦ {reason}' },
+  },
   ACCOUNT_APPROVED: {
     EN: { title: 'Account approved', body: 'Your account has been approved. Welcome!' },
     AM: { title: 'መለያዎ ጸድቋል', body: 'መለያዎ ጸድቋል። እንኳን ደህና መጡ!' },
