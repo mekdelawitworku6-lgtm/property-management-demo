@@ -5,7 +5,7 @@ import { PrismaService } from '../../../database/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../../../common/constants/audit-actions.constants';
 import { REALTIME_EVENTS } from '../../../common/constants/events.constants';
-import { isPlatformStaff, requireOwnerId, resolveOwnerId } from '../../../common/utils/owner-scope.util';
+import { isPlatformStaff, isPlatformWide, requireOwnerId, resolveOwnerId } from '../../../common/utils/owner-scope.util';
 import { buildPaginatedList, resolvePagination } from '../../../common/utils/paginated-list.util';
 import { addDays } from '../../../common/utils/date.util';
 import { generateReference } from '../../../common/utils/reference.util';
@@ -74,6 +74,10 @@ export class ComplaintsService {
 
   scopeWhere(user: AuthUser): Prisma.ComplaintWhereInput {
     if (isPlatformStaff(user)) return this.adminVisibilityWhere();
+    // Staff the platform appointed directly are not triaging escalations, they
+    // work the whole estate, so they see every owner's complaints rather than
+    // the admin's escalated-only view.
+    if (isPlatformWide(user)) return {};
     const ownerId = resolveOwnerId(user);
     return ownerId ? { ownerId } : { tenantId: user.id };
   }

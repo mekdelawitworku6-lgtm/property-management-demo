@@ -5,7 +5,7 @@ import { PrismaService } from '../../../database/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../../../common/constants/audit-actions.constants';
 import { REALTIME_EVENTS } from '../../../common/constants/events.constants';
-import { assertCanAccess, isPlatformStaff, requireOwnerId, scopeWhere } from '../../../common/utils/owner-scope.util';
+import { assertCanAccess, isPlatformWide, requireOwnerId, scopeWhere } from '../../../common/utils/owner-scope.util';
 import { buildPaginatedList, resolvePagination } from '../../../common/utils/paginated-list.util';
 import { addDays, formatDate, startOfDayUtc } from '../../../common/utils/date.util';
 import { generateReference } from '../../../common/utils/reference.util';
@@ -191,7 +191,7 @@ export class AgreementsService {
       ...(filter.propertyId ? { propertyId: filter.propertyId } : {}),
       ...(filter.unitId ? { unitId: filter.unitId } : {}),
       ...(filter.tenantId ? { tenantId: filter.tenantId } : {}),
-      ...(filter.ownerId && isPlatformStaff(user) ? { ownerId: filter.ownerId } : {}),
+      ...(filter.ownerId && isPlatformWide(user) ? { ownerId: filter.ownerId } : {}),
     };
     const [docs, total] = await Promise.all([
       this.prisma.agreement.findMany({
@@ -323,7 +323,7 @@ export class AgreementsService {
   async terminate(user: AuthUser, id: string, dto: TerminateAgreementDto) {
     const agreement = await this.prisma.agreement.findUnique({ where: { id }, include: { renewedTo: true } });
     if (!agreement) throw new NotFoundException('Agreement not found');
-    if (!isPlatformStaff(user) && agreement.ownerId !== requireOwnerId(user)) {
+    if (!isPlatformWide(user) && agreement.ownerId !== requireOwnerId(user)) {
       throw new NotFoundException('Agreement not found');
     }
     if (agreement.status !== AgreementStatus.ACTIVE) throw new BadRequestException('Only active agreements can be terminated');
@@ -440,5 +440,90 @@ export class AgreementsService {
       await this.prisma.agreement.update({ where: { id: agreement.id }, data: { expiryReminderSentAt: now } });
     }
     return agreements.length;
+  }
+
+  /**
+   * Daily job: nudge the owner to decide on a renewal at 60 and again at 30 days before
+   * the lease ends. Each mark is stamped separately, so a lease that skips past 60 (or a
+   * job that was down for a few days) still gets both reminders at the right point.
+   *
+   * No rent change is applied here. Renewal is a deliberate owner action and `renew()`
+   * carries the new amount, so rent never escalates on its own.
+   */
+  async sendRenewalReminders(now: Date = new Date()): Promise<number> {
+    const marks: Array<{ days: number; stamp: 'renewalReminder60SentAt' | 'renewalReminder30SentAt' }> = [
+      { days: 60, stamp: 'renewalReminder60SentAt' },
+      { days: 30, stamp: 'renewalReminder30SentAt' },
+    ];
+
+    let sent = 0;
+    for (const mark of marks) {
+      const target = addDays(startOfDayUtc(now), mark.days);
+      const agreements = await this.prisma.agreement.findMany({
+        where: {
+          status: AgreementStatus.ACTIVE,
+          [mark.stamp]: null,
+          // Match the exact day, so the reminder is not sent early.
+          endDate: { gte: target, lt: addDays(target, 1) },
+        },
+        include: { unit: { select: { unitNumber: true } } },
+      });
+
+      for (const agreement of agreements) {
+        const params = {
+          reference: agreement.referenceNo,
+          unit: agreement.unit.unitNumber,
+          days: String(mark.days),
+          endDate: formatDate(agreement.endDate),
+        };
+        await this.notifications.notify([agreement.tenantId], 'AGREEMENT_RENEWAL_DUE', params, {
+          sms: true,
+          data: { agreementId: agreement.id },
+        });
+        await this.notifications.notifyOwner(agreement.ownerId, 'AGREEMENT_RENEWAL_DUE', params, {
+          data: { agreementId: agreement.id },
+        });
+        await this.prisma.agreement.update({
+          where: { id: agreement.id },
+          data: { [mark.stamp]: now },
+        });
+        await this.audit.log(AUDIT_ACTIONS.AGREEMENT_RENEWAL_REMINDER_SENT, 'Agreement', agreement.id, null, {
+          daysBeforeEnd: mark.days,
+        });
+        this.realtime.emitToUsers([agreement.tenantId, agreement.ownerId], REALTIME_EVENTS.AGREEMENT_UPDATED, {
+          id: agreement.id,
+          renewalReminderDays: mark.days,
+        });
+        sent += 1;
+      }
+    }
+    return sent;
+  }
+
+  /**
+   * Leases the owner should be looking at right now, for the owner dashboard and the
+   * renewal banner. Sorted by nearest end date first.
+   */
+  async findUpcomingRenewals(user: AuthUser, withinDays = 60) {
+    const ownerId = requireOwnerId(user);
+    const now = startOfDayUtc(new Date());
+    return this.prisma.agreement.findMany({
+      where: {
+        ownerId,
+        status: AgreementStatus.ACTIVE,
+        endDate: { gte: now, lte: addDays(now, withinDays) },
+      },
+      select: {
+        id: true,
+        referenceNo: true,
+        endDate: true,
+        rentAmount: true,
+        renewalReminder60SentAt: true,
+        renewalReminder30SentAt: true,
+        tenant: { select: { id: true, fullName: true } },
+        unit: { select: { unitNumber: true } },
+      },
+      orderBy: { endDate: 'asc' },
+    });
   }
 }

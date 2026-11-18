@@ -34,14 +34,16 @@ export class TeamService {
 
   /**
    * Resolves whose portfolio a *new* staff account belongs to. An owner can only
-   * ever act on their own staff; platform staff must name the owner, because an
-   * admin manages every owner's portfolio and the account has to be attributed
-   * to one of them.
+   * ever act on their own staff. Platform staff may name an owner to attach the
+   * account to that portfolio, or omit it to create a platform-wide account that
+   * belongs to Possible Technology and can work across every owner.
+   *
+   * @returns the owner id, or null for a platform-wide account.
    */
-  private async resolveEmployerId(actor: AuthUser, ownerId?: string): Promise<string> {
+  private async resolveEmployerId(actor: AuthUser, ownerId?: string): Promise<string | null> {
     if (actor.role === UserRole.OWNER) return actor.id;
     if (!isPlatformStaff(actor)) throw new ForbiddenException('Not allowed to manage staff accounts');
-    if (!ownerId) throw new BadRequestException('ownerId is required when managing staff as platform staff');
+    if (!ownerId) return null;
     const owner = await this.prisma.user.findFirst({ where: { id: ownerId, role: UserRole.OWNER } });
     if (!owner) throw new NotFoundException('Owner not found');
     return owner.id;

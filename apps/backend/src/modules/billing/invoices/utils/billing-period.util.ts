@@ -155,3 +155,78 @@ export function buildDepositInvoiceDraft(agreement: AgreementBillingInput): Invo
 export function invoiceKey(draft: { type: InvoiceType; periodStart: Date }): string {
   return `${draft.type}:${startOfDayUtc(draft.periodStart).toISOString()}`;
 }
+
+/** A rent invoice a prepayment is allowed to settle, ordered oldest period first. */
+export interface SettleableInvoice {
+  id: string;
+  invoiceNo: string;
+  periodStart: Date;
+  periodEnd: Date;
+  /** Prisma Decimal or number — both are handled by `toNumber`. */
+  amount: unknown;
+  amountPaid: unknown;
+}
+
+/** What one payment ended up doing: invoices it closed, months covered, leftover credit. */
+export interface AllocationResult {
+  allocations: { invoiceId: string; invoiceNo: string; amount: number; periodEnd: Date }[];
+  /** Rent periods fully or partly settled by this payment. */
+  monthsCovered: number;
+  /** Cash left after every due invoice was settled — carried as credit. */
+  credit: number;
+  /** Last day rent stays covered, or null when the payment did not reach a future period. */
+  prepaidThrough: Date | null;
+}
+
+/**
+ * Spreads one payment across an agreement's invoices oldest-first, which is what makes
+ * prepayment work: paying 3 months at once settles the current invoice and then carries
+ * the surplus forward until the money runs out, leaving any remainder as credit.
+ *
+ * Only invoices that are genuinely still owed are considered, so a payment can never
+ * overpay an invoice and status stays derived from the amounts.
+ */
+export function allocatePayment(invoices: SettleableInvoice[], amount: number): AllocationResult {
+  const allocations: AllocationResult['allocations'] = [];
+  const settled = new Set<string>();
+  let remaining = roundMoney(amount);
+  let monthsCovered = 0;
+  let prepaidThrough: Date | null = null;
+
+  const ordered = [...invoices].sort(
+    (a, b) => a.periodStart.getTime() - b.periodStart.getTime() || a.periodEnd.getTime() - b.periodEnd.getTime(),
+  );
+
+  for (const invoice of ordered) {
+    if (remaining <= 0) break;
+    const due = roundMoney(toNumber(invoice.amount) - toNumber(invoice.amountPaid));
+    if (due <= 0) continue;
+
+    const applied = roundMoney(Math.min(due, remaining));
+    remaining = roundMoney(remaining - applied);
+    if (settled.has(invoice.id)) continue;
+    settled.add(invoice.id);
+    allocations.push({
+      invoiceId: invoice.id,
+      invoiceNo: invoice.invoiceNo,
+      amount: applied,
+      periodEnd: invoice.periodEnd,
+    });
+    if (applied > 0) {
+      monthsCovered += 1;
+      if (!prepaidThrough || invoice.periodEnd > prepaidThrough) prepaidThrough = invoice.periodEnd;
+    }
+  }
+
+  return { allocations, monthsCovered, credit: Math.max(0, remaining), prepaidThrough };
+}
+
+/**
+ * How much of an invoice a payment covered, ignoring how many invoices it touched.
+ * Used to tell "settled the bill" apart from "prepaid future rent".
+ */
+export function isPrepayment(result: AllocationResult, singleInvoiceOutstanding: number, requested?: number): boolean {
+  if (!Number.isFinite(singleInvoiceOutstanding) || singleInvoiceOutstanding <= 0) return result.monthsCovered > 1;
+  if (result.credit > 0) return true;
+  return requested !== undefined && requested > singleInvoiceOutstanding + 0.009;
+}

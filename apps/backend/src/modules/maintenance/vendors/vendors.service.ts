@@ -3,7 +3,7 @@ import { Prisma, WorkOrderStatus } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../../../common/constants/audit-actions.constants';
-import { requireOwnerId } from '../../../common/utils/owner-scope.util';
+import { isPlatformWide, requireOwnerId } from '../../../common/utils/owner-scope.util';
 import { buildPaginatedList, resolvePagination } from '../../../common/utils/paginated-list.util';
 import { normalizeEthiopianPhone } from '../../../common/utils/phone.util';
 import { sumMoney } from '../../../common/utils/money.util';
@@ -36,7 +36,7 @@ export class VendorsService {
   async findAll(user: AuthUser, filter: VendorFilterDto = {}) {
     const { page, limit, skip, take } = resolvePagination(filter.page, filter.limit);
     const where: Prisma.VendorWhereInput = {
-      ownerId: requireOwnerId(user),
+      ...(isPlatformWide(user) ? {} : { ownerId: requireOwnerId(user) }),
       isActive: filter.isActive ?? true,
       ...(filter.serviceType ? { serviceType: filter.serviceType } : {}),
       ...(filter.search ? { name: { contains: filter.search, mode: 'insensitive' } } : {}),
@@ -51,7 +51,7 @@ export class VendorsService {
   /** Vendor with work-order history and total spend. */
   async findOne(user: AuthUser, id: string) {
     const vendor = await this.prisma.vendor.findFirst({
-      where: { id, ownerId: requireOwnerId(user) },
+      where: { id, ...(isPlatformWide(user) ? {} : { ownerId: requireOwnerId(user) }) },
       include: { workOrders: { orderBy: { createdAt: 'desc' }, take: 20 } },
     });
     if (!vendor) throw new NotFoundException('Vendor not found');

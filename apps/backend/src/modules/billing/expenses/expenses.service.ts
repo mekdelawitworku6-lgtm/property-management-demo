@@ -3,7 +3,7 @@ import { ExpenseCategory, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../../../common/constants/audit-actions.constants';
-import { isPlatformStaff, requireOwnerId } from '../../../common/utils/owner-scope.util';
+import { isPlatformWide, requireOwnerId } from '../../../common/utils/owner-scope.util';
 import { buildPaginatedList, resolvePagination } from '../../../common/utils/paginated-list.util';
 import { sumMoney } from '../../../common/utils/money.util';
 import type { AuthUser } from '../../../common/types/auth-user.type';
@@ -63,7 +63,7 @@ export class ExpensesService {
   async findAll(user: AuthUser, filter: ExpenseFilterDto = {}) {
     const { page, limit, skip, take } = resolvePagination(filter.page, filter.limit);
     const where: Prisma.ExpenseWhereInput = {
-      ...(isPlatformStaff(user) ? {} : { ownerId: requireOwnerId(user) }),
+      ...(isPlatformWide(user) ? {} : { ownerId: requireOwnerId(user) }),
       ...(filter.propertyId ? { propertyId: filter.propertyId } : {}),
       ...(filter.category ? { category: filter.category } : {}),
       ...(filter.from || filter.to
@@ -90,7 +90,9 @@ export class ExpensesService {
   }
 
   async findOwned(user: AuthUser, id: string) {
-    const expense = await this.prisma.expense.findFirst({ where: { id, ownerId: requireOwnerId(user) } });
+    const expense = await this.prisma.expense.findFirst({
+      where: { id, ...(isPlatformWide(user) ? {} : { ownerId: requireOwnerId(user) }) },
+    });
     if (!expense) throw new NotFoundException('Expense not found');
     return expense;
   }

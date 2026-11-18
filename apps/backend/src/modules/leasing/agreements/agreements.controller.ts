@@ -42,6 +42,14 @@ export class AgreementsController {
     return this.agreementsService.verifyByReference(referenceNo);
   }
 
+  @Get('upcoming-renewals')
+  @Roles(UserRole.OWNER, UserRole.MANAGER)
+  @RequirePermissions(ManagerPermission.AGREEMENT_VIEW)
+  @ApiOperation({ summary: 'Leases ending soon, for the renewal prompt (no rent change implied)' })
+  upcomingRenewals(@CurrentUser() user: AuthUser) {
+    return this.agreementsService.findUpcomingRenewals(user);
+  }
+
   @Get(':id')
   @RequirePermissions(ManagerPermission.AGREEMENT_VIEW)
   @AuditRead('Agreement')

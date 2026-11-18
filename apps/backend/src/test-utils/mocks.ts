@@ -56,6 +56,13 @@ export const USERS = {
     employerId: IDS.owner,
     permissions: [ManagerPermission.PROPERTY_VIEW],
   }),
+  /**
+   * Staff the platform appointed directly: a manager with no employer, so it
+   * belongs to Possible Technology and reads across every owner.
+   */
+  platformManager: authUser('77777777-7777-7777-7777-777777777777', UserRole.MANAGER, {
+    permissions: [...ALL_MANAGER_PERMISSIONS],
+  }),
   tenant: authUser(IDS.tenant, UserRole.TENANT),
   admin: authUser(IDS.admin, UserRole.ADMIN),
   telecom: authUser(IDS.telecom, UserRole.TELECOM),

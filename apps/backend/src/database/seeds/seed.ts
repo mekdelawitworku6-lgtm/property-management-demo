@@ -2,9 +2,29 @@
  * Idempotent demo seed (existing rows are skipped / updated in place).
  * Run inside Docker: `docker compose run --rm seed` (or it runs automatically on `docker compose up`).
  */
-import { ApprovalStatus, Language, PrismaClient, PropertyType, UnitType, UserRole, VendorServiceType } from '@prisma/client';
+import {
+  AgreementStatus,
+  ApprovalStatus,
+  InvoiceStatus,
+  InvoiceType,
+  Language,
+  PrismaClient,
+  PropertyType,
+  UnitStatus,
+  UnitType,
+  UserRole,
+  VendorServiceType,
+} from '@prisma/client';
 import { hashPassword } from '../../common/utils/password.util';
 import { ALL_MANAGER_PERMISSIONS } from '../../common/constants/manager-permissions.constants';
+import { buildAgreementContent, computeEndDate, hashContent } from '../../modules/leasing/agreements/utils/agreement-content.util';
+import {
+  buildDepositInvoiceDraft,
+  buildRentInvoiceDrafts,
+  invoiceKey,
+  type InvoiceDraft,
+} from '../../modules/billing/invoices/utils/billing-period.util';
+import { generateReference } from '../../common/utils/reference.util';
 
 export const SEED_PASSWORD = process.env.SEED_PASSWORD ?? 'Demo@12345';
 
@@ -87,6 +107,9 @@ export async function seed(prisma: PrismaClient): Promise<void> {
       data: { ownerId: owner.id, name: 'Kality Plumbing Services', serviceType: VendorServiceType.PLUMBING, phoneNumber: '+251911556677' },
     });
   }
+
+  const agreementCount = await seedActiveAgreement(prisma, { owner, tenant, property });
+
   console.log('Seed complete:', {
     admin: admin.phoneNumber,
     telecom: telecom.phoneNumber,
@@ -96,7 +119,116 @@ export async function seed(prisma: PrismaClient): Promise<void> {
     password: SEED_PASSWORD,
     property: property.name,
     units: units.length,
+    invoices: agreementCount,
   });
+}
+
+/**
+ * One fully executed lease (unit A-101) with the rent/deposit invoices a signed agreement
+ * normally produces. This is real data written through the same builders the signing flow
+ * uses, so payment history, prepayment and reminders can be exercised end to end.
+ */
+async function seedActiveAgreement(
+  prisma: PrismaClient,
+  ctx: {
+    owner: { id: string; fullName: string; phoneNumber: string };
+    tenant: { id: string; fullName: string; phoneNumber: string };
+    property: { id: string; name: string; address: string; city: string; subCity: string | null };
+  },
+): Promise<number> {
+  const unit = await prisma.unit.findFirst({
+    where: { propertyId: ctx.property.id, unitNumber: 'A-101' },
+  });
+  if (!unit) return 0;
+
+  // Start on the 1st so rent periods align with calendar months.
+  const now = new Date();
+  const startDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const endDate = computeEndDate(startDate, 12);
+  const signedAt = new Date(startDate.getTime() - 3 * 86_400_000);
+
+  let agreement = await prisma.agreement.findFirst({ where: { unitId: unit.id, tenantId: ctx.tenant.id } });
+  if (!agreement) {
+    // The reference number is part of the hashed text, so generate it before building.
+    const referenceNo = generateReference('AGR');
+    const content = buildAgreementContent({
+      referenceNo,
+      owner: { fullName: ctx.owner.fullName, phoneNumber: ctx.owner.phoneNumber },
+      tenant: { fullName: ctx.tenant.fullName, phoneNumber: ctx.tenant.phoneNumber },
+      property: {
+        name: ctx.property.name,
+        address: ctx.property.address,
+        city: ctx.property.city,
+        subCity: ctx.property.subCity,
+      },
+      unit: { unitNumber: unit.unitNumber, type: unit.type },
+      startDate,
+      endDate,
+      rentAmount: unit.rentAmount,
+      depositAmount: unit.depositAmount,
+      currency: 'ETB',
+      paymentDueDay: 1,
+    });
+
+    agreement = await prisma.agreement.create({
+      data: {
+        referenceNo,
+        unitId: unit.id,
+        propertyId: ctx.property.id,
+        tenantId: ctx.tenant.id,
+        ownerId: ctx.owner.id,
+        startDate,
+        endDate,
+        rentAmount: unit.rentAmount,
+        depositAmount: unit.depositAmount,
+        currency: 'ETB',
+        paymentDueDay: 1,
+        content,
+        contentHash: hashContent(content),
+        status: AgreementStatus.ACTIVE,
+        ownerSignedAt: signedAt,
+        ownerSignature: ctx.owner.fullName,
+        tenantSignedAt: signedAt,
+        tenantSignature: ctx.tenant.fullName,
+        tenantSignatureIp: '127.0.0.1',
+      },
+    });
+  }
+
+  await prisma.unit.update({ where: { id: unit.id }, data: { status: UnitStatus.OCCUPIED } });
+
+  const billing = {
+    id: agreement.id,
+    tenantId: agreement.tenantId,
+    ownerId: agreement.ownerId,
+    propertyId: agreement.propertyId,
+    unitId: agreement.unitId,
+    startDate: agreement.startDate,
+    endDate: agreement.endDate,
+    rentAmount: agreement.rentAmount,
+    depositAmount: agreement.depositAmount,
+    paymentDueDay: agreement.paymentDueDay,
+    currency: agreement.currency,
+  };
+
+  const existing = await prisma.invoice.findMany({
+    where: { agreementId: agreement.id },
+    select: { type: true, periodStart: true },
+  });
+  const seen = new Set(existing.map(invoiceKey));
+  const drafts = [
+    buildDepositInvoiceDraft(billing),
+    ...buildRentInvoiceDrafts(billing, new Date(startDate.getTime() + 90 * 86_400_000)),
+  ].filter(Boolean) as InvoiceDraft[];
+
+  const missing = drafts.filter((draft) => !seen.has(invoiceKey(draft)));
+  if (missing.length) {
+    await prisma.invoice.createMany({
+      data: missing.map((draft) => ({ ...draft, invoiceNo: generateReference('INV') })),
+      skipDuplicates: true,
+    });
+  }
+  return missing.length;
 }
 
 if (require.main === module) {

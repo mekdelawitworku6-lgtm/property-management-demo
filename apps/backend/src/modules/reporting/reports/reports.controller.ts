@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Res, StreamableFile } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe, Query, Res, StreamableFile } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiProduces, ApiTags } from '@nestjs/swagger';
 import { ManagerPermission, UserRole } from '@prisma/client';
 import type { Response } from 'express';
@@ -8,7 +8,7 @@ import { RequirePermissions } from '../../../common/decorators/permissions.decor
 import { AuditRead } from '../../../common/decorators/audit-read.decorator';
 import type { AuthUser } from '../../../common/types/auth-user.type';
 import { ExportedFile, ReportsService } from './reports.service';
-import { RangeQueryDto, StatementQueryDto } from './dto/report.dto';
+import { AgreementReportQueryDto, AuditReportQueryDto, RangeQueryDto, ReportFormatDto, StatementQueryDto } from './dto/report.dto';
 
 export function toStreamable(res: Response, file: ExportedFile): StreamableFile {
   res.set({
@@ -63,6 +63,54 @@ export class ReportsController {
   async rentRoll(@CurrentUser() user: AuthUser, @Query() query: StatementQueryDto, @Res({ passthrough: true }) res: Response) {
     if (!query.format || query.format === 'json') return this.reportsService.rentRoll(user, query.ownerId);
     const file = await this.reportsService.exportRentRoll(user, query.format, query.lang ?? user.language, query.ownerId);
+    return toStreamable(res, file);
+  }
+
+  @Get('agreements')
+  @RequirePermissions(ManagerPermission.REPORT_VIEW)
+  @AuditRead('Agreement')
+  @ApiProduces('application/json', 'application/pdf', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  @ApiOperation({ summary: 'Agreement audit registry — json / xlsx / pdf' })
+  async agreements(
+    @CurrentUser() user: AuthUser,
+    @Query() query: AgreementReportQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    if (!query.format || query.format === 'json') return this.reportsService.agreementsReport(user, query.status);
+    const file = await this.reportsService.exportAgreements(
+      user, query.status, query.format, query.lang ?? user.language,
+    );
+    return toStreamable(res, file);
+  }
+
+  @Get('audit-logs')
+  @Roles(UserRole.ADMIN, UserRole.TELECOM)
+  @AuditRead('AuditLog')
+  @ApiProduces('application/json', 'application/pdf', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  @ApiOperation({ summary: 'Certified platform audit trail — json / xlsx / pdf (platform staff only)' })
+  async auditLogs(
+    @CurrentUser() user: AuthUser,
+    @Query() query: AuditReportQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    if (!query.format || query.format === 'json') return this.reportsService.auditLogsReport(user, query.entityType);
+    const file = await this.reportsService.exportAuditLogs(
+      user, query.entityType, query.format, query.lang ?? user.language,
+    );
+    return toStreamable(res, file);
+  }
+
+  @Get('agreement/:id')
+  @ApiProduces('application/pdf', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  @ApiOperation({ summary: 'Signed agreement certificate — xlsx / pdf' })
+  async agreementCertificate(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: ReportFormatDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const format = query.format && query.format !== 'json' ? query.format : 'pdf';
+    const file = await this.reportsService.exportAgreementCertificate(user, id, format, query.lang ?? user.language);
     return toStreamable(res, file);
   }
 }

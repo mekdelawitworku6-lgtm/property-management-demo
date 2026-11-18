@@ -1,8 +1,8 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AgreementStatus, InvoiceStatus, Language, PaymentStatus } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
-import { isPlatformStaff, requireOwnerId } from '../../../common/utils/owner-scope.util';
+import { assertCanAccess, isPlatformStaff, isPlatformWide, requireOwnerId, scopeWhere } from '../../../common/utils/owner-scope.util';
 import { formatDate } from '../../../common/utils/date.util';
 import { roundMoney, sumMoney, toNumber } from '../../../common/utils/money.util';
 import { reportLabels } from '../../../common/i18n/messages';
@@ -30,9 +30,25 @@ export class ReportsService {
   ) {}
 
   resolveOwner(user: AuthUser, ownerId?: string): string {
-    if (isPlatformStaff(user)) {
+    if (isPlatformWide(user)) {
+      // Reports are per-owner documents, so there is no meaningful "all owners"
+      // version: platform staff and portfolio-less staff must name the owner.
       if (!ownerId) throw new BadRequestException('ownerId is required for platform staff');
       return ownerId;
+    }
+    return requireOwnerId(user);
+  }
+
+  /**
+   * Staff appointed by the platform have no portfolio of their own, so a
+   * per-owner report has to name one. Platform staff keep their existing
+   * behaviour of omitting the filter to mean "every owner".
+   */
+  private resolveReportOwner(user: AuthUser, ownerIdParam?: string): string | undefined {
+    if (isPlatformStaff(user)) return ownerIdParam;
+    if (isPlatformWide(user)) {
+      if (!ownerIdParam) throw new BadRequestException('ownerId is required for platform staff');
+      return ownerIdParam;
     }
     return requireOwnerId(user);
   }
@@ -97,7 +113,7 @@ export class ReportsService {
   }
 
   async paymentsReport(user: AuthUser, from?: string, to?: string, ownerIdParam?: string) {
-    const ownerId = isPlatformStaff(user) ? ownerIdParam : requireOwnerId(user);
+    const ownerId = this.resolveReportOwner(user, ownerIdParam);
     const { start, end } = periodBounds(from ?? resolveMonth().start, to ?? resolveMonth().end);
     const payments = await this.prisma.payment.findMany({
       where: { ...(ownerId ? { ownerId } : {}), createdAt: { gte: start, lte: end } },
@@ -255,6 +271,169 @@ export class ReportsService {
       ],
       format,
       'rent-roll',
+      lang,
+    );
+  }
+
+  /** Every agreement the caller may see — the data behind the audit archive download. */
+  async agreementsReport(user: AuthUser, status?: AgreementStatus) {
+    const agreements = await this.prisma.agreement.findMany({
+      where: { ...scopeWhere(user), ...(status ? { status } : {}) },
+      include: {
+        property: { select: { name: true } },
+        unit: { select: { unitNumber: true } },
+        tenant: { select: { fullName: true } },
+        owner: { select: { fullName: true } },
+      },
+      omit: { content: true },
+      orderBy: { createdAt: 'desc' },
+      take: 5000,
+    });
+    return agreements.map((a) => ({
+      reference: a.referenceNo,
+      status: a.status,
+      property: a.property.name,
+      unit: a.unit.unitNumber,
+      owner: a.owner.fullName,
+      tenant: a.tenant.fullName,
+      rent: toNumber(a.rentAmount),
+      deposit: toNumber(a.depositAmount),
+      startDate: a.startDate,
+      endDate: a.endDate,
+      ownerSignedAt: a.ownerSignedAt,
+      tenantSignedAt: a.tenantSignedAt,
+      contentHash: a.contentHash,
+    }));
+  }
+
+  async exportAgreements(user: AuthUser, status: AgreementStatus | undefined, format: ReportFormat, lang: Language) {
+    const rows = await this.agreementsReport(user, status);
+    const L = reportLabels(lang);
+    return this.render(
+      [
+        {
+          title: 'Digital Agreement Audit Registry',
+          subtitle: `${L.generatedAt}: ${formatDate(new Date())}`,
+          columns: [
+            { key: 'reference', header: L.reference, width: 22 },
+            { key: 'status', header: L.status, width: 16 },
+            { key: 'property', header: L.property, width: 22 },
+            { key: 'unit', header: L.unit, width: 10 },
+            { key: 'owner', header: L.owner, width: 18 },
+            { key: 'tenant', header: L.tenant, width: 18 },
+            { key: 'rent', header: L.rent, width: 14, numeric: true },
+            { key: 'deposit', header: 'Deposit', width: 14, numeric: true },
+            { key: 'startDate', header: 'Start', width: 12 },
+            { key: 'endDate', header: 'End', width: 12 },
+            { key: 'ownerSignedAt', header: 'Owner signed', width: 18 },
+            { key: 'tenantSignedAt', header: 'Tenant signed', width: 18 },
+            { key: 'contentHash', header: 'SHA-256', width: 40 },
+          ],
+          rows,
+        },
+      ],
+      format,
+      'agreement-registry',
+      lang,
+    );
+  }
+
+  /** Append-only trail behind the certified log file download (platform staff only). */
+  async auditLogsReport(user: AuthUser, entityType?: string) {
+    if (!isPlatformStaff(user)) throw new ForbiddenException('Only platform staff can export the audit trail');
+    const logs = await this.prisma.auditLog.findMany({
+      where: entityType ? { entityType } : {},
+      include: { actor: { select: { fullName: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 5000,
+    });
+    return logs.map((log) => ({
+      timestamp: log.createdAt,
+      actor: log.actor?.fullName ?? 'System',
+      actorRole: log.actorRole ?? '',
+      action: log.action,
+      entityType: log.entityType,
+      entityId: log.entityId ?? '',
+      ipAddress: log.ipAddress ?? '',
+    }));
+  }
+
+  async exportAuditLogs(user: AuthUser, entityType: string | undefined, format: ReportFormat, lang: Language) {
+    const rows = await this.auditLogsReport(user, entityType);
+    const L = reportLabels(lang);
+    return this.render(
+      [
+        {
+          title: 'Certified Platform Audit Trail',
+          subtitle: `${L.generatedAt}: ${formatDate(new Date())} · ${rows.length} events`,
+          columns: [
+            { key: 'timestamp', header: L.date, width: 20 },
+            { key: 'actor', header: 'Actor', width: 22 },
+            { key: 'actorRole', header: 'Role', width: 14 },
+            { key: 'action', header: 'Action', width: 22 },
+            { key: 'entityType', header: 'Entity', width: 18 },
+            { key: 'entityId', header: 'Entity ID', width: 34 },
+            { key: 'ipAddress', header: 'IP', width: 18 },
+          ],
+          rows,
+        },
+      ],
+      format,
+      'audit-trail',
+      lang,
+    );
+  }
+
+  /** One signed agreement, fetched with the same access check as the detail view. */
+  async agreementCertificate(user: AuthUser, id: string) {
+    const agreement = await this.prisma.agreement.findUnique({
+      where: { id },
+      include: {
+        property: { select: { name: true, address: true, city: true } },
+        unit: { select: { unitNumber: true } },
+        tenant: { select: { fullName: true, phoneNumber: true } },
+        owner: { select: { fullName: true, phoneNumber: true } },
+      },
+    });
+    if (!agreement) throw new NotFoundException('Agreement not found');
+    assertCanAccess(user, agreement);
+    return agreement;
+  }
+
+  async exportAgreementCertificate(user: AuthUser, id: string, format: ReportFormat, lang: Language) {
+    const agreement = await this.agreementCertificate(user, id);
+    const lines = agreement.content.split('\n').map((line, index) => ({ line: `${index + 1}. ${line}` }));
+    return this.render(
+      [
+        {
+          title: `Tenancy Agreement ${agreement.referenceNo}`,
+          subtitle: `${agreement.property.name} · ${agreement.unit.unitNumber} · ${formatDate(new Date())}`,
+          columns: [
+            { key: 'field', header: 'Field', width: 28 },
+            { key: 'value', header: 'Value', width: 72 },
+          ],
+          rows: [
+            { field: 'Owner', value: `${agreement.owner.fullName} (${agreement.owner.phoneNumber})` },
+            { field: 'Tenant', value: `${agreement.tenant.fullName} (${agreement.tenant.phoneNumber})` },
+            { field: 'Property', value: `${agreement.property.name}, ${agreement.property.city}` },
+            { field: 'Address', value: agreement.property.address },
+            { field: 'Status', value: agreement.status },
+            { field: 'Monthly rent', value: toNumber(agreement.rentAmount) },
+            { field: 'Security deposit', value: toNumber(agreement.depositAmount) },
+            { field: 'Term', value: `${formatDate(agreement.startDate)} – ${formatDate(agreement.endDate)}` },
+            { field: 'Owner signed', value: agreement.ownerSignedAt ? formatDate(agreement.ownerSignedAt) : 'Not signed' },
+            { field: 'Tenant signed', value: agreement.tenantSignedAt ? formatDate(agreement.tenantSignedAt) : 'Not signed' },
+            { field: 'SHA-256', value: agreement.contentHash },
+          ],
+        },
+        {
+          title: 'Signed Agreement Text',
+          columns: [{ key: 'line', header: 'Agreement text (as signed)', width: 100 }],
+          rows: lines,
+        },
+      ],
+      format,
+      `agreement-${agreement.referenceNo}`,
       lang,
     );
   }

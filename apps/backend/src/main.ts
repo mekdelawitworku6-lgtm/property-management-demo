@@ -44,7 +44,11 @@ async function bootstrap() {
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean);
-  app.enableCors({ origin: origins.includes('*') ? true : origins, credentials: true });
+  app.enableCors({
+    origin: origins.includes('*') ? true : origins,
+    credentials: true,
+    exposedHeaders: ['Content-Disposition'],
+  });
 
   configureApp(app);
   app.useGlobalInterceptors(new LoggingInterceptor());

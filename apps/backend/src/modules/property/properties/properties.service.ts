@@ -3,7 +3,7 @@ import { AgreementStatus, Prisma, UnitStatus } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../../../common/constants/audit-actions.constants';
-import { assertCanAccess, isPlatformStaff, requireOwnerId } from '../../../common/utils/owner-scope.util';
+import { assertCanAccess, isPlatformWide, requireOwnerId } from '../../../common/utils/owner-scope.util';
 import { buildPaginatedList, resolvePagination } from '../../../common/utils/paginated-list.util';
 import type { AuthUser } from '../../../common/types/auth-user.type';
 import { CreatePropertyDto, PropertyFilterDto, UpdatePropertyDto } from './dto/property.dto';
@@ -39,7 +39,7 @@ export class PropertiesService {
   async findAll(user: AuthUser, filter: PropertyFilterDto = {}) {
     const { page, limit, skip, take } = resolvePagination(filter.page, filter.limit);
     const where: Prisma.PropertyWhereInput = {
-      ...(isPlatformStaff(user) ? (filter.ownerId ? { ownerId: filter.ownerId } : {}) : { ownerId: requireOwnerId(user) }),
+      ...(isPlatformWide(user) ? (filter.ownerId ? { ownerId: filter.ownerId } : {}) : { ownerId: requireOwnerId(user) }),
       ...(filter.type ? { type: filter.type } : {}),
       ...(filter.city ? { city: { equals: filter.city, mode: 'insensitive' } } : {}),
       isActive: filter.isActive ?? true,
@@ -112,7 +112,7 @@ export class PropertiesService {
     const property = await this.prisma.property.findUnique({ where: { id } });
     if (!property) throw new NotFoundException('Property not found');
     assertCanAccess(user, property);
-    if (!isPlatformStaff(user)) requireOwnerId(user);
+    if (!isPlatformWide(user)) requireOwnerId(user);
     return property;
   }
 }

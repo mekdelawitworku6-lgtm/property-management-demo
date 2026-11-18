@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsEnum, IsIn, IsOptional, IsUUID, Matches } from 'class-validator';
-import { Language } from '@prisma/client';
+import { IsDateString, IsEnum, IsIn, IsOptional, IsString, IsUUID, Matches } from 'class-validator';
+import { AgreementStatus, Language } from '@prisma/client';
 
 export const REPORT_FORMATS = ['json', 'xlsx', 'pdf'] as const;
 export type ReportFormat = (typeof REPORT_FORMATS)[number];
@@ -22,4 +22,12 @@ export class StatementQueryDto extends ReportFormatDto {
 export class RangeQueryDto extends ReportFormatDto {
   @ApiPropertyOptional({ example: '2026-09-01' }) @IsOptional() @IsDateString() from?: string;
   @ApiPropertyOptional({ example: '2026-09-30' }) @IsOptional() @IsDateString() to?: string;
+}
+
+export class AgreementReportQueryDto extends ReportFormatDto {
+  @ApiPropertyOptional({ enum: AgreementStatus }) @IsOptional() @IsEnum(AgreementStatus) status?: AgreementStatus;
+}
+
+export class AuditReportQueryDto extends ReportFormatDto {
+  @ApiPropertyOptional({ example: 'Payment' }) @IsOptional() @IsString() entityType?: string;
 }

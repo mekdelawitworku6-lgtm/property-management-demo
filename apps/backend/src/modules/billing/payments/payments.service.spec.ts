@@ -4,6 +4,8 @@ import { PaymentsService, resolveConfirmationSource } from './payments.service';
 
 const invoice = { id: IDS.invoice, invoiceNo: 'INV-1', status: 'UNPAID', amount: 18000, amountPaid: 0, tenantId: IDS.tenant, ownerId: IDS.owner, agreementId: IDS.agreement, propertyId: IDS.property };
 const pendingPayment = { id: IDS.payment, referenceNo: 'PAY-1', method: 'TELEBIRR', status: 'PENDING', amount: 18000, invoiceId: IDS.invoice, tenantId: IDS.tenant, ownerId: IDS.owner, providerReference: null, notes: null };
+/** Every payment row carries its split across the invoices it settled. */
+const allocations = [{ invoiceId: IDS.invoice, amount: 18000, invoice: { invoiceNo: 'INV-1' } }];
 
 describe('PaymentsService', () => {
   const prisma = createPrismaMock();
@@ -23,6 +25,9 @@ describe('PaymentsService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     prisma.invoice.findUnique.mockResolvedValue(invoice);
+    // No later invoices outstanding on the agreement, so the prepayment ceiling equals
+    // this invoice's own balance.
+    prisma.invoice.findMany.mockResolvedValue([]);
     prisma.payment.aggregate.mockResolvedValue({ _sum: { amount: null } });
     prisma.payment.findUnique.mockResolvedValue(null);
     prisma.payment.create.mockImplementation(async ({ data }) => ({ id: IDS.payment, ...data }));
@@ -49,14 +54,45 @@ describe('PaymentsService', () => {
       await expect(service.resolvePayable(IDS.invoice)).resolves.toMatchObject({ amount: 10000 });
     });
 
-    it('rejects paid/cancelled invoices, fully covered invoices and overpayment', async () => {
+    it('rejects paid/cancelled invoices and fully covered invoices', async () => {
       prisma.invoice.findUnique.mockResolvedValueOnce({ ...invoice, status: 'PAID' });
       await expect(service.resolvePayable(IDS.invoice)).rejects.toThrow('Invoice is PAID');
       prisma.payment.aggregate.mockResolvedValueOnce({ _sum: { amount: 18000 } });
       await expect(service.resolvePayable(IDS.invoice)).rejects.toThrow('fully covered');
-      await expect(service.resolvePayable(IDS.invoice, 20000)).rejects.toThrow('exceeds');
       prisma.invoice.findUnique.mockResolvedValueOnce(null);
       await expect(service.resolvePayable(IDS.invoice)).rejects.toThrow(NotFoundException);
+    });
+
+    it('rejects a zero or negative amount', async () => {
+      await expect(service.resolvePayable(IDS.invoice, 0)).rejects.toThrow('greater than zero');
+      await expect(service.resolvePayable(IDS.invoice, -100)).rejects.toThrow('greater than zero');
+    });
+
+    it('allows paying more than the invoice when the agreement still owes rent', async () => {
+      // A later month is still unpaid, so the ceiling reaches across the agreement.
+      prisma.invoice.findMany.mockResolvedValueOnce([{ amount: 5000, amountPaid: 0 }]);
+      await expect(service.maxPayable(IDS.agreement, invoice)).resolves.toBe(23_000);
+    });
+  });
+
+  describe('prepayment ceiling', () => {
+    it('caps a payment at everything still owed on the agreement', async () => {
+      prisma.invoice.findMany.mockResolvedValue([{ amount: 5000, amountPaid: 1000 }]);
+      // 18,000 on this invoice + 4,000 outstanding on the next one.
+      await expect(service.maxPayable(IDS.agreement, invoice)).resolves.toBe(22_000);
+    });
+
+    it('discounts payments that are already pending on the agreement', async () => {
+      prisma.invoice.findMany.mockResolvedValue([{ amount: 5000, amountPaid: 0 }]);
+      prisma.payment.aggregate.mockResolvedValue({ _sum: { amount: 3000 } });
+      await expect(service.maxPayable(IDS.agreement, invoice)).resolves.toBe(20_000);
+    });
+
+    it('never goes below what is still owed on this invoice', async () => {
+      // Later invoices are fully covered, so only this invoice's balance remains.
+      prisma.invoice.findMany.mockResolvedValue([{ amount: 5000, amountPaid: 5000 }]);
+      prisma.payment.aggregate.mockResolvedValue({ _sum: { amount: 9000 } });
+      await expect(service.maxPayable(IDS.agreement, invoice)).resolves.toBe(18_000);
     });
   });
 
@@ -246,17 +282,27 @@ describe('PaymentsService', () => {
     expect(service.buildWhere(USERS.tenant, { ownerId: 'o' })).toEqual({ tenantId: IDS.tenant });
   });
 
-  it('findAll returns history with the confirmed total', async () => {
-    prisma.payment.findMany.mockResolvedValue([{ id: 'p' }]);
+  it('findAll returns history with the confirmed total and its allocations', async () => {
+    prisma.payment.findMany.mockResolvedValue([{ ...pendingPayment, creditAmount: 2000, allocations }]);
     prisma.payment.count.mockResolvedValue(1);
     prisma.payment.aggregate.mockResolvedValue({ _sum: { amount: 18000 } });
-    await expect(service.findAll(USERS.tenant, {})).resolves.toMatchObject({ docs: [{ id: 'p' }], totalConfirmed: 18000 });
+    await expect(service.findAll(USERS.tenant, {})).resolves.toMatchObject({
+      docs: [
+        {
+          id: IDS.payment,
+          amount: 18000,
+          creditAmount: 2000,
+          allocations: [{ invoiceId: IDS.invoice, invoiceNo: 'INV-1', amount: 18000 }],
+        },
+      ],
+      totalConfirmed: 18000,
+    });
   });
 
   it('findOne enforces access', async () => {
-    prisma.payment.findUnique.mockResolvedValueOnce(pendingPayment);
-    await expect(service.findOne(USERS.tenant, IDS.payment)).resolves.toBe(pendingPayment);
-    prisma.payment.findUnique.mockResolvedValueOnce(pendingPayment);
+    prisma.payment.findUnique.mockResolvedValueOnce({ ...pendingPayment, allocations });
+    await expect(service.findOne(USERS.tenant, IDS.payment)).resolves.toMatchObject({ id: IDS.payment });
+    prisma.payment.findUnique.mockResolvedValueOnce({ ...pendingPayment, allocations });
     await expect(service.findOne(USERS.otherOwner, IDS.payment)).rejects.toThrow(ForbiddenException);
     prisma.payment.findUnique.mockResolvedValueOnce(null);
     await expect(service.findOne(USERS.tenant, IDS.payment)).rejects.toThrow(NotFoundException);

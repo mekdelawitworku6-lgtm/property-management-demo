@@ -71,7 +71,14 @@ describe('InvoicesService', () => {
   it('sendUpcomingReminders sends one due-soon reminder', async () => {
     prisma.invoice.findMany.mockResolvedValue([{ id: 'i', tenantId: IDS.tenant, amount: 1000, amountPaid: 0, dueDate: d('2026-11-05'), unit: { unitNumber: 'A' } }]);
     await expect(service.sendUpcomingReminders(d('2026-11-03'))).resolves.toBe(1);
-    expect(prisma.invoice.findMany.mock.calls[0][0].where).toMatchObject({ reminderCount: 0 });
+    // Never remind twice for the same cycle: either no reminder yet, or the last one is
+    // older than the cadence window.
+    expect(prisma.invoice.findMany.mock.calls[0][0].where).toMatchObject({
+      OR: [
+        { lastReminderAt: null },
+        { lastReminderAt: { lt: expect.any(Date) } },
+      ],
+    });
   });
 
   it('buildWhere combines scope and filters', () => {

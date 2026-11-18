@@ -6,7 +6,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { buildPaginatedList, resolvePagination } from '../../common/utils/paginated-list.util';
 import type { AuthUser } from '../../common/types/auth-user.type';
 import {
-  CreateManagerForOwnerDto,
+  CreatePlatformStaffDto,
   UpdateManagerPermissionsDto,
 } from '../core-services/users/dto/create-account.dto';
 import { TeamService } from '../core-services/users/services/team.service';
@@ -15,8 +15,9 @@ import { AdminStaffFilterDto } from './dto/admin.dto';
 /**
  * Platform staff management. Kept separate from the owner-side `/managers`
  * routes, which stay owner-scoped, because these are not tied to one portfolio:
- * the target owner is named on each write and every change is audited with the
- * platform account as the actor, so it shows up in that owner's activity trail.
+ * an account created here belongs to Possible Technology unless an owner is
+ * named, and every change is audited with the platform account as the actor, so
+ * it shows up in the affected owner's activity trail.
  */
 @ApiTags('Admin - Staff')
 @ApiBearerAuth('access-token')
@@ -34,8 +35,10 @@ export class AdminStaffController {
   }
 
   @Post()
-  @ApiOperation({ summary: 'Add a staff account to an owner on the owner\'s behalf' })
-  createStaff(@CurrentUser() user: AuthUser, @Body() dto: CreateManagerForOwnerDto) {
+  @ApiOperation({
+    summary: 'Add a staff account. Omit ownerId for a platform-wide account that works across every owner.',
+  })
+  createStaff(@CurrentUser() user: AuthUser, @Body() dto: CreatePlatformStaffDto) {
     const { ownerId, ...rest } = dto;
     return this.teamService.createManager(user, rest, ownerId);
   }

@@ -4,7 +4,7 @@ import { PrismaService } from '../../../database/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../../../common/constants/audit-actions.constants';
 import { REALTIME_EVENTS } from '../../../common/constants/events.constants';
-import { isPlatformStaff, requireOwnerId } from '../../../common/utils/owner-scope.util';
+import { isPlatformWide, requireOwnerId } from '../../../common/utils/owner-scope.util';
 import { buildPaginatedList, resolvePagination } from '../../../common/utils/paginated-list.util';
 import { roundMoney } from '../../../common/utils/money.util';
 import { generateReference } from '../../../common/utils/reference.util';
@@ -107,7 +107,7 @@ export class WorkOrdersService {
   async findAll(user: AuthUser, filter: WorkOrderFilterDto = {}) {
     const { page, limit, skip, take } = resolvePagination(filter.page, filter.limit);
     const where: Prisma.WorkOrderWhereInput = {
-      ...(isPlatformStaff(user) ? {} : { ownerId: requireOwnerId(user) }),
+      ...(isPlatformWide(user) ? {} : { ownerId: requireOwnerId(user) }),
       ...(filter.status ? { status: filter.status } : {}),
       ...(filter.propertyId ? { propertyId: filter.propertyId } : {}),
       ...(filter.vendorId ? { vendorId: filter.vendorId } : {}),
@@ -122,7 +122,7 @@ export class WorkOrdersService {
 
   async findOne(user: AuthUser, id: string) {
     const workOrder = await this.prisma.workOrder.findFirst({
-      where: { id, ...(isPlatformStaff(user) ? {} : { ownerId: requireOwnerId(user) }) },
+      where: { id, ...(isPlatformWide(user) ? {} : { ownerId: requireOwnerId(user) }) },
       include: { ...WORK_ORDER_INCLUDE, expense: true },
     });
     if (!workOrder) throw new NotFoundException('Work order not found');

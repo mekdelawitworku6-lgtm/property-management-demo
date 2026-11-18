@@ -4,7 +4,7 @@ import { PaymentMethod, PaymentStatus, PayoutStatus, Prisma } from '@prisma/clie
 import { PrismaService } from '../../../database/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../../../common/constants/audit-actions.constants';
-import { assertCanAccess, isPlatformStaff, requireOwnerId } from '../../../common/utils/owner-scope.util';
+import { assertCanAccess, isPlatformWide, requireOwnerId } from '../../../common/utils/owner-scope.util';
 import { buildPaginatedList, resolvePagination } from '../../../common/utils/paginated-list.util';
 import { endOfMonthUtc, startOfDayUtc, startOfMonthUtc } from '../../../common/utils/date.util';
 import { percentOf, roundMoney, sumMoney } from '../../../common/utils/money.util';
@@ -53,7 +53,7 @@ export class PayoutsService {
   }
 
   async preview(user: AuthUser, dto: PreviewPayoutDto) {
-    const ownerId = isPlatformStaff(user) ? dto.ownerId : requireOwnerId(user);
+    const ownerId = isPlatformWide(user) ? dto.ownerId : requireOwnerId(user);
     if (!ownerId) throw new BadRequestException('ownerId is required');
     const { start, end } = periodBounds(dto.from, dto.to);
     const payments = await this.prisma.payment.findMany({
@@ -140,7 +140,7 @@ export class PayoutsService {
   async findAll(user: AuthUser, filter: PayoutFilterDto = {}) {
     const { page, limit, skip, take } = resolvePagination(filter.page, filter.limit);
     const where: Prisma.PayoutWhereInput = {
-      ...(isPlatformStaff(user) ? (filter.ownerId ? { ownerId: filter.ownerId } : {}) : { ownerId: requireOwnerId(user) }),
+      ...(isPlatformWide(user) ? (filter.ownerId ? { ownerId: filter.ownerId } : {}) : { ownerId: requireOwnerId(user) }),
       ...(filter.status ? { status: filter.status } : {}),
     };
     const [docs, total] = await Promise.all([

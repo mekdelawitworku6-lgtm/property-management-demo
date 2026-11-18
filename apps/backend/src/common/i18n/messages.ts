@@ -13,6 +13,50 @@ export const MESSAGES = {
     EN: { title: 'Rent overdue', body: 'Your rent of {amount} ETB for {unit} was due on {dueDate}. Please pay now.' },
     AM: { title: 'ያለፈ የኪራይ ክፍያ', body: 'ለ{unit} የ{amount} ብር ኪራይ በ{dueDate} መከፈል ነበረበት። እባክዎ አሁን ይክፈሉ።' },
   },
+  /** Tenant-facing: a late fee was added because the invoice stayed unpaid past the grace period. */
+  RENT_LATE_FEE: {
+    EN: {
+      title: 'Late payment fee',
+      body: 'A late fee of {amount} ETB was added to the invoice for {unit} ({days} day(s) overdue, due {dueDate}). Please pay the outstanding balance plus the fee.',
+    },
+    AM: {
+      title: 'ዘገየት የክፍያ ቅጣት',
+      body: 'ለ{unit} የተዘጋጀው የክፍያ ሒሳብ ({dueDate} የመከፈል ቀን) {days} ቀን ያልፈቀደ በመሆኑ {amount} ብር ቅጣት ተጨምሯል። እባክዎ ቀሪውን ክፍያ ከቅጣቱ ጋር ይክፈሉ።',
+    },
+  },
+  /** Owner-facing: the agreement ends in {days} day(s) on {endDate}; decide whether to renew. */
+  AGREEMENT_RENEWAL_DUE: {
+    EN: {
+      title: 'Agreement ending soon',
+      body: 'The agreement for {unit} ends in {days} day(s), on {endDate}. Review the terms and renew if the tenant is staying. Rent is not changed automatically — set the new amount yourself when you renew.',
+    },
+    AM: {
+      title: 'የውል ስምምነት በቅርብ ያበቃል',
+      body: 'የ{unit} ውል ስምምነት በ{days} ቀን (በ{endDate}) ያበቃል። ድንጋጌዎችን ይመልከቱ፤ ተዎይዞው ከቀጠለ ማደስ ይሁን። የኪራይ መጠን በራስ-ራስ አይቀየርም — ሲያደሱ አዲስ መጠን ራስዎ ይሞላሉ።',
+    },
+  },
+  /** Owner-facing: the tenant paid ahead, so no transfer is expected until {through}. */
+  RENT_PREPAID: {
+    EN: {
+      title: 'Rent prepaid',
+      body: 'Payment of {amount} ETB (ref {reference}) prepaid {months} month(s). Rent is covered through {through}.',
+    },
+    AM: {
+      title: 'ኪራይ ቅድሚያ ተከፍሏል',
+      body: 'የ{amount} ብር ክፍያ (ማጣቀሻ {reference}) {months} ወር ቅድሚያ ከፍሏል። ኪራይ እስከ {through} ድረስ ተሸፍኗል።',
+    },
+  },
+  /** Owner-facing countdown: prepaid cover ends in {days} day(s), on {through}. */
+  RENT_PREPAID_EXPIRING: {
+    EN: {
+      title: 'Prepaid rent expiring',
+      body: 'Prepaid rent for {unit} runs out in {days} day(s), on {through}. Expect the tenant to top up.',
+    },
+    AM: {
+      title: 'የቅድሚያ ኪራይ ክፍያ ይበሃል',
+      body: 'ለ{unit} የቅድሚያ ኪራይ ክፍያ በ{days} ቀን({through}) ያበቃል። ተከራሽው እንደገና ክፍያ እንጠበቃለን።',
+    },
+  },
   PAYMENT_RECEIVED: {
     EN: { title: 'Payment received', body: 'Payment of {amount} ETB (ref {reference}) has been confirmed.' },
     AM: { title: 'ክፍያ ተቀብለናል', body: 'የ{amount} ብር ክፍያ (ማጣቀሻ {reference}) ተረጋግጧል።' },

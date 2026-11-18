@@ -26,6 +26,9 @@ describe('Reporting controllers', () => {
       ownerStatement: jest.fn().mockResolvedValue('json'), exportOwnerStatement: jest.fn().mockResolvedValue(file),
       paymentsReport: jest.fn().mockResolvedValue('json'), exportPayments: jest.fn().mockResolvedValue(file),
       rentRoll: jest.fn().mockResolvedValue('json'), exportRentRoll: jest.fn().mockResolvedValue(file),
+      agreementsReport: jest.fn().mockResolvedValue('json'), exportAgreements: jest.fn().mockResolvedValue(file),
+      auditLogsReport: jest.fn().mockResolvedValue('json'), exportAuditLogs: jest.fn().mockResolvedValue(file),
+      exportAgreementCertificate: jest.fn().mockResolvedValue(file),
     };
     const c = new ReportsController(s as any);
     await expect(c.ownerStatement(USERS.owner, {}, res())).resolves.toBe('json');
@@ -35,5 +38,10 @@ describe('Reporting controllers', () => {
     await expect(c.payments(USERS.owner, { format: 'xlsx', lang: 'AM' }, res())).resolves.toBeInstanceOf(StreamableFile);
     await expect(c.rentRoll(USERS.owner, {}, res())).resolves.toBe('json');
     await expect(c.rentRoll(USERS.owner, { format: 'xlsx' }, res())).resolves.toBeInstanceOf(StreamableFile);
+    await expect(c.agreements(USERS.admin, {}, res())).resolves.toBe('json');
+    await expect(c.agreements(USERS.admin, { format: 'pdf' }, res())).resolves.toBeInstanceOf(StreamableFile);
+    await expect(c.auditLogs(USERS.admin, {}, res())).resolves.toBe('json');
+    await expect(c.auditLogs(USERS.admin, { format: 'xlsx' }, res())).resolves.toBeInstanceOf(StreamableFile);
+    await expect(c.agreementCertificate(USERS.owner, 'agreement-id', {}, res())).resolves.toBeInstanceOf(StreamableFile);
   });
 });

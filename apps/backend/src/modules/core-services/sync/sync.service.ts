@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
-import { isPlatformStaff, resolveOwnerId } from '../../../common/utils/owner-scope.util';
+import { isPlatformWide, resolveOwnerId } from '../../../common/utils/owner-scope.util';
 import type { AuthUser } from '../../../common/types/auth-user.type';
 
 const MAX_ROWS = 500;
@@ -23,7 +23,10 @@ export class SyncService {
   constructor(private readonly prisma: PrismaService) {}
 
   async changes(user: AuthUser, sinceParam?: string) {
-    if (isPlatformStaff(user)) throw new BadRequestException('Sync is for owner, manager and tenant clients');
+    // A delta feed is built from one portfolio. Staff appointed by the platform
+    // have no portfolio of their own, so there is nothing coherent to sync -
+    // silently returning their (empty) tenant scope would look like data loss.
+    if (isPlatformWide(user)) throw new BadRequestException('Sync is for owner, manager and tenant clients');
     const since = parseSince(sinceParam);
     const serverTime = new Date();
     const updated = { updatedAt: { gt: since } };

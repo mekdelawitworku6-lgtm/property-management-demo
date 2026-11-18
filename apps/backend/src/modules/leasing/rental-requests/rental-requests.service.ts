@@ -4,7 +4,7 @@ import { PrismaService } from '../../../database/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../../../common/constants/audit-actions.constants';
 import { REALTIME_EVENTS } from '../../../common/constants/events.constants';
-import { isPlatformStaff, requireOwnerId, resolveOwnerId } from '../../../common/utils/owner-scope.util';
+import { isPlatformWide, requireOwnerId, resolveOwnerId } from '../../../common/utils/owner-scope.util';
 import { buildPaginatedList, resolvePagination } from '../../../common/utils/paginated-list.util';
 import { startOfDayUtc } from '../../../common/utils/date.util';
 import type { AuthUser } from '../../../common/types/auth-user.type';
@@ -71,7 +71,7 @@ export class RentalRequestsService {
     const { page, limit, skip, take } = resolvePagination(filter.page, filter.limit);
     const ownerId = resolveOwnerId(user);
     const where: Prisma.RentalRequestWhereInput = {
-      ...(isPlatformStaff(user) ? {} : ownerId ? { unit: { property: { ownerId } } } : { tenantId: user.id }),
+      ...(isPlatformWide(user) ? {} : ownerId ? { unit: { property: { ownerId } } } : { tenantId: user.id }),
       ...(filter.status ? { status: filter.status } : {}),
       ...(filter.unitId ? { unitId: filter.unitId } : {}),
       ...(filter.propertyId ? { unit: { propertyId: filter.propertyId, ...(ownerId ? { property: { ownerId } } : {}) } } : {}),
@@ -88,7 +88,7 @@ export class RentalRequestsService {
     if (!request) throw new NotFoundException('Rental request not found');
     const ownerId = resolveOwnerId(user);
     const allowed =
-      isPlatformStaff(user) ||
+      isPlatformWide(user) ||
       (ownerId && request.unit.property.ownerId === ownerId) ||
       (user.role === UserRole.TENANT && request.tenantId === user.id);
     if (!allowed) throw new NotFoundException('Rental request not found');

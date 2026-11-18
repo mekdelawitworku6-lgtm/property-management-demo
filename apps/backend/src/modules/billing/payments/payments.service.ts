@@ -1,20 +1,21 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { ConfirmationSource, InvoiceStatus, Payment, PaymentMethod, PaymentStatus, Prisma, UserRole } from '@prisma/client';
+import { ConfirmationSource, InvoiceStatus, InvoiceType, Payment, PaymentMethod, PaymentStatus, Prisma, UserRole } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../database/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../../../common/constants/audit-actions.constants';
 import { REALTIME_EVENTS } from '../../../common/constants/events.constants';
-import { assertCanAccess, isPlatformStaff, requireOwnerId, resolveOwnerId, scopeWhere } from '../../../common/utils/owner-scope.util';
+import { assertCanAccess, isPlatformWide, requireOwnerId, resolveOwnerId, scopeWhere } from '../../../common/utils/owner-scope.util';
 import { buildPaginatedList, resolvePagination } from '../../../common/utils/paginated-list.util';
+import { formatDate } from '../../../common/utils/date.util';
 import { roundMoney, sumMoney, toNumber } from '../../../common/utils/money.util';
 import { generateReference } from '../../../common/utils/reference.util';
 import type { AuthUser } from '../../../common/types/auth-user.type';
 import { NotificationsService } from '../../core-services/notifications/notifications.service';
 import { RealtimeGateway } from '../../core-services/realtime/realtime.gateway';
 import { TelebirrService } from '../../integrations/telebirr/telebirr.service';
-import { InvoicesService } from '../invoices/invoices.service';
-import { outstandingAmount } from '../invoices/utils/billing-period.util';
+import { InvoicesService, OPEN_INVOICE_STATUSES } from '../invoices/invoices.service';
+import { allocatePayment, isPrepayment, outstandingAmount } from '../invoices/utils/billing-period.util';
 import {
   ConfirmPaymentDto, InitiateTelebirrDto, PaymentFilterDto, RecordOfflinePaymentDto, RejectPaymentDto, SubmitBankTransferDto,
 } from './dto/payment.dto';
@@ -24,7 +25,32 @@ const PAYMENT_INCLUDE = {
   tenant: { select: { id: true, fullName: true, phoneNumber: true } },
   property: { select: { id: true, name: true } },
   agreement: { select: { id: true, referenceNo: true, unitId: true } },
+  allocations: {
+    select: { invoiceId: true, amount: true, periodEnd: true, invoice: { select: { invoiceNo: true } } },
+    orderBy: { periodEnd: 'asc' },
+  },
 } satisfies Prisma.PaymentInclude;
+
+/** The payment row shape the history endpoints return, with relations from PAYMENT_INCLUDE. */
+type PaymentWithRelations = Prisma.PaymentGetPayload<{ include: typeof PAYMENT_INCLUDE }>;
+
+/**
+ * Flattens a payment row into the history shape: which invoices it settled, how many
+ * months it covered, and any credit left over. Prisma returns Decimals, so money is
+ * converted here rather than in the UI.
+ */
+function toPaymentRecord(payment: PaymentWithRelations) {
+  return {
+    ...payment,
+    amount: toNumber(payment.amount),
+    creditAmount: toNumber(payment.creditAmount),
+    allocations: payment.allocations.map((allocation) => ({
+      invoiceId: allocation.invoiceId,
+      invoiceNo: allocation.invoice.invoiceNo,
+      amount: toNumber(allocation.amount),
+    })),
+  };
+}
 
 /** Who may confirm which payment method and which ConfirmationSource that records. */
 export function resolveConfirmationSource(user: AuthUser, method: PaymentMethod): ConfirmationSource {
@@ -57,7 +83,15 @@ export class PaymentsService {
     return this.prisma.payment.findUnique({ where: { clientRef } });
   }
 
-  /** Loads a payable invoice and resolves the amount (default: outstanding − pending payments). */
+  /**
+   * Loads a payable invoice and resolves how much is being paid.
+   *
+   * `amount` is deliberately NOT capped at this invoice's balance: paying several months
+   * at once is allowed, and the surplus is spread over later invoices by
+   * {@link allocatePayment}. Partial payments stay allowed too, so the only check here is
+   * that the amount is positive — the upper bound is the agreement-wide prepayment ceiling
+   * enforced by {@link assertWithinPrepaymentCeiling}.
+   */
   async resolvePayable(invoiceId: string, requestedAmount?: number) {
     const invoice = await this.prisma.invoice.findUnique({ where: { id: invoiceId } });
     if (!invoice) throw new NotFoundException('Invoice not found');
@@ -71,8 +105,98 @@ export class PaymentsService {
     const payable = roundMoney(outstandingAmount(invoice) - toNumber(pending._sum.amount));
     if (payable <= 0) throw new BadRequestException('Invoice is fully covered by pending payments');
     const amount = roundMoney(requestedAmount ?? payable);
-    if (amount > payable) throw new BadRequestException(`Amount exceeds the payable balance of ${payable}`);
-    return { invoice, amount };
+    if (amount <= 0) throw new BadRequestException('Amount must be greater than zero');
+    return { invoice, amount, payable };
+  }
+
+  /**
+   * Applies a confirmed payment to the invoices it covers and records the split.
+   *
+   * The target invoice is settled first, then the surplus rolls onto the agreement's later
+   * unpaid rent invoices. Each settled invoice gets a `PaymentAllocation` row so the
+   * history can show exactly which months a payment covered, and any money left over is
+   * stored as `creditAmount` on the payment.
+   */
+  private async settleInvoices(
+    tx: Prisma.TransactionClient,
+    paymentId: string,
+    primaryInvoiceId: string,
+    primaryInvoice: { id: string; agreementId: string; invoiceNo: string; periodStart: Date; periodEnd: Date; amount: unknown; amountPaid: unknown },
+    amount: number,
+  ): Promise<void> {
+    // Read through the transaction client so the invoices we settle are the ones we just
+    // locked in; `this.prisma` could otherwise see a concurrent settlement.
+    const later = await tx.invoice.findMany({
+      where: {
+        agreementId: primaryInvoice.agreementId,
+        type: InvoiceType.RENT,
+        status: { in: OPEN_INVOICE_STATUSES },
+        id: { not: primaryInvoiceId },
+      },
+      select: { id: true, invoiceNo: true, periodStart: true, periodEnd: true, amount: true, amountPaid: true },
+      orderBy: { periodStart: 'asc' },
+    });
+
+    const result = allocatePayment([primaryInvoice, ...later], amount);
+    const prepaid = isPrepayment(result, roundMoney(toNumber(primaryInvoice.amount) - toNumber(primaryInvoice.amountPaid)));
+
+    for (const allocation of result.allocations) {
+      await this.invoices.applyPayment(tx, allocation.invoiceId, allocation.amount);
+      await tx.paymentAllocation.create({
+        data: {
+          paymentId,
+          invoiceId: allocation.invoiceId,
+          amount: allocation.amount,
+          periodEnd: allocation.periodEnd,
+        },
+      });
+    }
+
+    await tx.payment.update({
+      where: { id: paymentId },
+      data: {
+        prepaidMonths: prepaid ? result.monthsCovered : 0,
+        creditAmount: prepaid ? result.credit : 0,
+        prepaidThrough: prepaid ? result.prepaidThrough : null,
+      },
+    });
+  }
+
+  /**
+   * A payment may cover this invoice plus anything still owed later on the agreement, but
+   * not more. Without this a fat-fingered amount could bank months of credit by accident.
+   */
+  private async assertWithinPrepaymentCeiling(
+    invoice: { id: string; agreementId: string; amount: unknown; amountPaid: unknown },
+    amount: number,
+  ): Promise<void> {
+    const ceiling = await this.maxPayable(invoice.agreementId, invoice);
+    if (amount > ceiling + 0.009) {
+      throw new BadRequestException(
+        `Amount exceeds what is owed on this agreement. The maximum is ${ceiling} ETB.`,
+      );
+    }
+  }
+
+  /** Upper bound for a prepayment: everything still owed on the agreement, including this invoice. */
+  async maxPayable(agreementId: string, invoice: { id: string; amount: unknown; amountPaid: unknown }): Promise<number> {
+    const others = await this.prisma.invoice.findMany({
+      where: {
+        agreementId,
+        type: InvoiceType.RENT,
+        status: { in: OPEN_INVOICE_STATUSES },
+        id: { not: invoice.id },
+      },
+      select: { amount: true, amountPaid: true },
+    });
+    const pending = await this.prisma.payment.aggregate({
+      where: { agreementId, invoiceId: { not: invoice.id }, status: PaymentStatus.PENDING },
+      _sum: { amount: true },
+    });
+    const futureDue = sumMoney(
+      others.map((row) => Math.max(0, toNumber(row.amount) - toNumber(row.amountPaid))),
+    );
+    return roundMoney(outstandingAmount(invoice) + Math.max(0, futureDue - toNumber(pending._sum.amount)));
   }
 
   /** FR-TEN-04: tenant starts a Telebirr payment → checkout URL / USSD prompt. */
@@ -80,8 +204,9 @@ export class PaymentsService {
     const existing = await this.findByClientRef(dto.clientRef);
     if (existing) return { payment: existing, checkout: { paymentUrl: existing.checkoutUrl, mode: 'existing' } };
 
-    const { invoice, amount } = await this.resolvePayable(dto.invoiceId, dto.amount);
+    const { invoice, amount, payable } = await this.resolvePayable(dto.invoiceId, dto.amount);
     if (invoice.tenantId !== user.id) throw new NotFoundException('Invoice not found');
+    await this.assertWithinPrepaymentCeiling(invoice, amount);
 
     const referenceNo = generateReference('PAY');
     const baseUrl = this.configService.get<string>('BASE_URL', 'http://localhost:4100');
@@ -117,6 +242,7 @@ export class PaymentsService {
     if (existing) return existing;
     const { invoice, amount } = await this.resolvePayable(dto.invoiceId, dto.amount);
     if (invoice.tenantId !== user.id) throw new NotFoundException('Invoice not found');
+    await this.assertWithinPrepaymentCeiling(invoice, amount);
     const duplicateRef = await this.prisma.payment.findFirst({
       where: { providerReference: dto.providerReference, method: PaymentMethod.BANK_TRANSFER, status: { not: PaymentStatus.REJECTED } },
     });
@@ -152,6 +278,7 @@ export class PaymentsService {
     if (existing) return existing;
     const { invoice, amount } = await this.resolvePayable(dto.invoiceId, dto.amount);
     if (invoice.ownerId !== ownerId) throw new NotFoundException('Invoice not found');
+    await this.assertWithinPrepaymentCeiling(invoice, amount);
 
     const payment = await this.prisma.$transaction(async (tx) => {
       const created = await tx.payment.create({
@@ -169,14 +296,14 @@ export class PaymentsService {
           receiptUrl: dto.receiptUrl,
           notes: dto.notes,
           clientRef: dto.clientRef ?? null,
-          status: PaymentStatus.CONFIRMED,
-          confirmationSource: ConfirmationSource.OWNER,
-          confirmedById: user.id,
-          confirmedAt: new Date(),
-          recordedById: user.id,
+status: PaymentStatus.CONFIRMED,
+        confirmationSource: ConfirmationSource.OWNER,
+        confirmedById: user.id,
+        confirmedAt: new Date(),
+        recordedById: user.id,
         },
       });
-      await this.invoices.applyPayment(tx, invoice.id, amount);
+      await this.settleInvoices(tx, created.id, invoice.id, invoice, amount);
       return created;
     });
     await this.audit.log(AUDIT_ACTIONS.PAYMENT_RECORDED, 'Payment', payment.id, user, { method: dto.method, amount });
@@ -196,6 +323,14 @@ export class PaymentsService {
       if (!current) throw new NotFoundException('Payment not found');
       if (current.status === PaymentStatus.CONFIRMED) return null;
       if (current.status !== PaymentStatus.PENDING) throw new BadRequestException(`Payment is ${current.status}`);
+
+      // Pending payments carry only invoiceId, so the invoice row is re-read here to get
+      // the period fields the allocation spread needs.
+      const invoice = current.invoiceId
+        ? await tx.invoice.findUnique({ where: { id: current.invoiceId } })
+        : null;
+      if (current.invoiceId && !invoice) throw new NotFoundException('Invoice not found');
+
       const updated = await tx.payment.update({
         where: { id: paymentId },
         data: {
@@ -207,7 +342,9 @@ export class PaymentsService {
           notes: extra.notes ?? current.notes,
         },
       });
-      if (current.invoiceId) await this.invoices.applyPayment(tx, current.invoiceId, toNumber(current.amount));
+      if (invoice) {
+        await this.settleInvoices(tx, paymentId, invoice.id, invoice, toNumber(current.amount));
+      }
       return updated;
     });
     if (!payment) return this.prisma.payment.findUnique({ where: { id: paymentId } });
@@ -226,6 +363,26 @@ export class PaymentsService {
     await this.notifications.notifyOwner(payment.ownerId, 'PAYMENT_RECEIVED', params, { data: { paymentId: payment.id } });
     this.realtime.emitToUsers([payment.tenantId, payment.ownerId], REALTIME_EVENTS.PAYMENT_UPDATED, payment);
     this.realtime.emitToStaff(REALTIME_EVENTS.PAYMENT_UPDATED, payment);
+
+    // A prepayment means future due dates need no transfer, so the owner is told how far
+    // ahead the tenant has paid — otherwise the owner keeps waiting for money that is
+    // already in the account.
+    if (payment.prepaidThrough && payment.prepaidMonths > 0) {
+      await this.notifications.notifyOwner(
+        payment.ownerId,
+        'RENT_PREPAID',
+        {
+          amount: toNumber(payment.amount),
+          reference: payment.referenceNo,
+          months: String(payment.prepaidMonths),
+          through: formatDate(payment.prepaidThrough),
+        },
+        { data: { paymentId: payment.id } },
+      );
+      this.logger.log(
+        `Prepayment ${payment.referenceNo}: ${payment.prepaidMonths} month(s) covered through ${formatDate(payment.prepaidThrough)}`,
+      );
+    }
   }
 
   /** FR-ADM-05: manual confirmation by Ethio Telecom / admin, or the owner for bank transfers. */
@@ -321,7 +478,7 @@ export class PaymentsService {
   buildWhere(user: AuthUser, filter: PaymentFilterDto): Prisma.PaymentWhereInput {
     return {
       ...scopeWhere(user),
-      ...(filter.ownerId && isPlatformStaff(user) ? { ownerId: filter.ownerId } : {}),
+      ...(filter.ownerId && isPlatformWide(user) ? { ownerId: filter.ownerId } : {}),
       ...(filter.status ? { status: filter.status } : {}),
       ...(filter.method ? { method: filter.method } : {}),
       ...(filter.propertyId ? { propertyId: filter.propertyId } : {}),
@@ -347,13 +504,16 @@ export class PaymentsService {
       this.prisma.payment.count({ where }),
       this.prisma.payment.aggregate({ where: { ...where, status: PaymentStatus.CONFIRMED }, _sum: { amount: true } }),
     ]);
-    return { ...buildPaginatedList(docs, { page, limit, total }), totalConfirmed: sumMoney([confirmed._sum.amount]) };
+    return {
+      ...buildPaginatedList(docs.map(toPaymentRecord), { page, limit, total }),
+      totalConfirmed: sumMoney([confirmed._sum.amount]),
+    };
   }
 
   async findOne(user: AuthUser, id: string) {
     const payment = await this.prisma.payment.findUnique({ where: { id }, include: PAYMENT_INCLUDE });
     if (!payment) throw new NotFoundException('Payment not found');
     assertCanAccess(user, payment);
-    return payment;
+    return toPaymentRecord(payment);
   }
 }

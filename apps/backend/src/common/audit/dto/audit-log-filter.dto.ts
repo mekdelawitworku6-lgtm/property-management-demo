@@ -33,13 +33,14 @@ export class AuditLogFilterDto extends PaginationDto {
   @IsOptional()
   @IsDateString()
   to?: string;
-}
 
-/** Owner trail: same filters, plus the switch to hide read-only view entries. */
-export class OwnerAuditLogFilterDto extends AuditLogFilterDto {
   @ApiPropertyOptional({ description: 'Set false to show only real changes and hide RECORD_VIEWED entries' })
   @IsOptional()
   @Transform(({ value }) => (typeof value === 'boolean' ? value : value === 'true'))
   @IsBoolean()
   includeViews?: boolean;
 }
+
+/** Owner trail: same filters. */
+export class OwnerAuditLogFilterDto extends AuditLogFilterDto {}
+

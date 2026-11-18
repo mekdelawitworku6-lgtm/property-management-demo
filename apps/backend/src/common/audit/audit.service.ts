@@ -76,6 +76,9 @@ export class AuditService {
     if (filter.entityType) where.entityType = filter.entityType;
     if (filter.entityId) where.entityId = filter.entityId;
     if (filter.actorId) where.actorId = filter.actorId;
+    if (filter.includeViews === false) {
+      where.action = { not: AUDIT_ACTIONS.RECORD_VIEWED };
+    }
     if (filter.from || filter.to) {
       where.createdAt = {
         ...(filter.from ? { gte: new Date(filter.from) } : {}),

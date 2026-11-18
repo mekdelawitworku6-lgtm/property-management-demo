@@ -195,11 +195,51 @@ describe('Staff accounts, permission grants and the owner activity trail (e2e)',
       await ctx.http().get(`${API}/invoices`).set(ctx.auth('appointed')).expect(403);
     });
 
-    it('requires the owner to be named, and refuses an unknown one', async () => {
-      const body = { fullName: 'No Owner', phoneNumber: nextPhone(), password: 'Staff@1234' };
-      await ctx.http().post(ADMIN).set(ctx.auth('admin')).send(body).expect(400);
+    it('creates a platform-wide account with no owner, which reads across every owner', async () => {
+      const created = await ctx.http().post(ADMIN).set(ctx.auth('admin')).send({
+        fullName: 'Platform Wide',
+        phoneNumber: nextPhone(),
+        password: 'Staff@1234',
+        permissions: [ManagerPermission.PROPERTY_VIEW, ManagerPermission.PROPERTY_MANAGE],
+      }).expect(201);
+      // No owner: the account belongs to Possible Technology.
+      expect(created.body.data.employerId).toBeNull();
+
+      // Having no employer, it is absent from any owner's filtered list and only
+      // present in the unfiltered one.
+      const every = await ctx.http().get(`${ADMIN}`).set(ctx.auth('admin')).expect(200);
+      expect(every.body.data.docs.some((m: any) => m.id === created.body.data.id)).toBe(true);
+      const filtered = await ctx.http().get(`${ADMIN}?ownerId=${ownerId}`).set(ctx.auth('admin')).expect(200);
+      expect(filtered.body.data.docs.some((m: any) => m.id === created.body.data.id)).toBe(false);
+
+      ctx.tokens.platformWide = await ctx.login(created.body.data.phoneNumber, 'Staff@1234');
+
+      // Both owners' properties are reachable, because the grant - not a
+      // portfolio - is what limits this account.
+      const all = await ctx.http().get(`${API}/properties`).set(ctx.auth('platformWide')).expect(200);
+      const ownerIds = new Set(all.body.data.docs.map((p: any) => p.ownerId));
+      expect(ownerIds.has(ownerId)).toBe(true);
+      expect(ownerIds.has(otherOwnerId)).toBe(true);
+
+      // Still bounded by the grant: no payment permission, no invoices.
+      await ctx.http().get(`${API}/invoices`).set(ctx.auth('platformWide')).expect(403);
+    });
+
+    it('refuses an unknown owner, and still refuses writes that need an owner', async () => {
+      const body = { fullName: 'Bad Owner', phoneNumber: nextPhone(), password: 'Staff@1234' };
       await ctx.http().post(ADMIN).set(ctx.auth('admin'))
         .send({ ...body, ownerId: '00000000-0000-4000-8000-000000000000' }).expect(404);
+
+      // A portfolio-less account may read across owners but cannot create a
+      // record that has to belong to one: there is no owner to attribute it to.
+      // This is refused by scope, not by permission - PROPERTY_MANAGE is granted.
+      const res = await ctx.http().post(`${API}/properties`).set(ctx.auth('platformWide')).send({
+        name: 'Orphan Property',
+        type: 'RESIDENTIAL',
+        city: 'Addis Ababa',
+        address: 'Somewhere',
+      }).expect(403);
+      expect(res.body.message).toMatch(/owner/i);
     });
 
     it('the admin can change and deactivate any owner\'s staff', async () => {

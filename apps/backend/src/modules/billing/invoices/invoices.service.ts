@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AgreementStatus, InvoiceStatus, Prisma } from '@prisma/client';
+import { AgreementStatus, InvoiceStatus, PaymentStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../../../common/constants/audit-actions.constants';
@@ -142,13 +142,21 @@ export class InvoicesService {
     return invoices.length;
   }
 
-  /** Daily job: one "rent due soon" reminder for invoices due within 3 days. */
+  /**
+   * Daily job: one "rent due soon" reminder per unpaid invoice due within 3 days.
+   *
+   * Keyed off `lastReminderAt` rather than `reminderCount`, because `generateDueInvoices`
+   * also bumps that counter when it creates an invoice — so a counter-based filter meant
+   * the reminder never fired for invoices the scheduler had just generated, which is
+   * exactly the case that matters most.
+   */
   async sendUpcomingReminders(now: Date = new Date()): Promise<number> {
+    const windowStart = startOfDayUtc(now);
     const invoices = await this.prisma.invoice.findMany({
       where: {
         status: { in: [InvoiceStatus.UNPAID, InvoiceStatus.PARTIALLY_PAID] },
-        reminderCount: 0,
-        dueDate: { gte: startOfDayUtc(now), lte: addDays(startOfDayUtc(now), 3) },
+        dueDate: { gte: windowStart, lte: addDays(windowStart, 3) },
+        OR: [{ lastReminderAt: null }, { lastReminderAt: { lt: windowStart } }],
       },
       include: { unit: { select: { unitNumber: true } } },
     });
@@ -165,6 +173,72 @@ export class InvoicesService {
       });
     }
     return invoices.length;
+  }
+
+  /**
+   * Daily job: warns the owner as prepaid rent runs out.
+   *
+   * Reads each active agreement's most recent prepayment and, when the covered period
+   * ends within the next 10 days, notifies the owner on the 10/5/3/2/1-day marks. Each
+   * mark fires once, because the window is matched against the coverage end date rather
+   * than a "has this fired" flag, and the previous mark no longer matches the next day.
+   */
+  async sendPrepaidExpiryNotices(now: Date = new Date()): Promise<number> {
+    const today = startOfDayUtc(now);
+    // One month out, then the usual 10/5/3/2/1 day countdown the owner asked for.
+    const marks = [30, 10, 5, 3, 2, 1];
+    const horizon = addDays(today, Math.max(...marks));
+
+    const coverages = await this.prisma.agreement.findMany({
+      where: {
+        status: AgreementStatus.ACTIVE,
+        payments: { some: { prepaidThrough: { not: null, lte: horizon } } },
+      },
+      select: {
+        id: true,
+        ownerId: true,
+        unit: { select: { unitNumber: true } },
+        payments: {
+          where: { prepaidThrough: { not: null, lte: horizon }, status: PaymentStatus.CONFIRMED },
+          orderBy: { prepaidThrough: 'desc' },
+          take: 1,
+          select: { prepaidThrough: true },
+        },
+      },
+    });
+
+    let sent = 0;
+    for (const agreement of coverages) {
+      const prepaidThrough = agreement.payments[0]?.prepaidThrough;
+      if (!prepaidThrough) continue;
+      const daysLeft = Math.round((startOfDayUtc(prepaidThrough).getTime() - today.getTime()) / 86_400_000);
+      if (!marks.includes(daysLeft)) continue;
+
+      // The daily job can overlap with a manual run, so only send each mark once.
+      const alreadySent = await this.prisma.notification.findFirst({
+        where: {
+          userId: agreement.ownerId,
+          type: 'RENT_PREPAID_EXPIRING',
+          createdAt: { gte: today },
+          data: { path: ['agreementId'], equals: agreement.id },
+        },
+        select: { id: true },
+      });
+      if (alreadySent) continue;
+
+      await this.notifications.notifyOwner(
+        agreement.ownerId,
+        'RENT_PREPAID_EXPIRING',
+        {
+          unit: agreement.unit?.unitNumber,
+          days: String(daysLeft),
+          through: formatDate(prepaidThrough),
+        },
+        { data: { agreementId: agreement.id, prepaidThrough: prepaidThrough.toISOString() } },
+      );
+      sent += 1;
+    }
+    return sent;
   }
 
   buildWhere(user: AuthUser, filter: InvoiceFilterDto): Prisma.InvoiceWhereInput {
