@@ -308,6 +308,8 @@ model TenantProfile {
   idNumberEncrypted        String?
   faydaId                  String?   @db.VarChar(40)
   kycStatus                KycStatus @default(NOT_SUBMITTED)
+  faydaVerificationRef     String?   @db.VarChar(80)
+  faydaVerifiedAt          DateTime?
   dateOfBirth              DateTime?
   occupation               String?   @db.VarChar(100)
   emergencyContactName     String?   @db.VarChar(150)

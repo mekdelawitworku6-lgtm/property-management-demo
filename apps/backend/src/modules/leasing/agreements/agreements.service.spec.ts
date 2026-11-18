@@ -16,7 +16,13 @@ describe('AgreementsService', () => {
   const notifications = mockNotifications();
   const realtime = mockRealtime();
   const invoices = { generateInitialInvoices: jest.fn(), cancelFutureInvoices: jest.fn() };
-  const service = new AgreementsService(prisma, audit as any, notifications as any, realtime as any, invoices as any, mockConfig({ LEASE_EXPIRY_REMINDER_DAYS: 30 }));
+  const fayda = { verify: jest.fn((dto: { faydaId: string }) => ({
+    verified: !dto.faydaId.toUpperCase().includes('FAIL'),
+    reference: 'FMK-TEST',
+    verifiedAt: new Date('2026-11-18T10:00:00Z'),
+    ...(dto.faydaId.toUpperCase().includes('FAIL') ? { reason: 'mock mismatch' } : {}),
+  })) };
+  const service = new AgreementsService(prisma, audit as any, notifications as any, realtime as any, invoices as any, fayda as any, mockConfig({ LEASE_EXPIRY_REMINDER_DAYS: 30 }));
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -100,6 +106,65 @@ describe('AgreementsService', () => {
     await expect(service.findOne(USERS.otherOwner, 'a')).rejects.toThrow(ForbiddenException);
     prisma.agreement.findUnique.mockResolvedValue(null);
     await expect(service.findOne(USERS.admin, 'a')).rejects.toThrow(NotFoundException);
+  });
+
+  describe('verifyFayda', () => {
+    const agreement = {
+      id: IDS.agreement,
+      referenceNo: 'AGR-1',
+      tenantId: IDS.tenant,
+      ownerId: IDS.owner,
+      status: 'PENDING_SIGNATURE',
+      unit: { id: IDS.unit, unitNumber: 'A-101' },
+    };
+
+    it('marks the tenant profile verified and notifies the tenant', async () => {
+      prisma.agreement.findFirst.mockResolvedValueOnce(agreement);
+      prisma.tenantProfile.upsert.mockResolvedValueOnce({
+        id: 'tp',
+        kycStatus: 'VERIFIED',
+        faydaId: 'FAYDA-12345678',
+        faydaVerifiedAt: new Date('2026-11-18T10:00:00Z'),
+      });
+
+      await expect(service.verifyFayda(USERS.tenant, IDS.agreement, { faydaId: 'fayda-12345678' })).resolves.toMatchObject({
+        verified: true,
+        kycStatus: 'VERIFIED',
+        faydaId: 'FAYDA-12345678',
+        faydaVerificationRef: 'FMK-TEST',
+      });
+      expect(prisma.tenantProfile.upsert.mock.calls[0][0].update).toMatchObject({
+        idType: 'FAYDA',
+        kycStatus: 'VERIFIED',
+        faydaVerificationRef: 'FMK-TEST',
+      });
+      expect(audit.log).toHaveBeenCalledWith('FAYDA_VERIFICATION_VERIFIED', 'TenantProfile', 'tp', USERS.tenant, expect.any(Object));
+      expect(notifications.notify).toHaveBeenCalledWith([IDS.tenant], 'FAYDA_VERIFIED', expect.any(Object), expect.any(Object));
+    });
+
+    it('records a failed mock check as REJECTED', async () => {
+      prisma.agreement.findFirst.mockResolvedValueOnce(agreement);
+      prisma.tenantProfile.upsert.mockResolvedValueOnce({
+        id: 'tp',
+        kycStatus: 'REJECTED',
+        faydaId: 'FAYDA-FAIL01',
+        faydaVerifiedAt: null,
+      });
+
+      await expect(service.verifyFayda(USERS.tenant, IDS.agreement, { faydaId: 'FAYDA-FAIL01' })).resolves.toMatchObject({
+        verified: false,
+        kycStatus: 'REJECTED',
+        reason: 'mock mismatch',
+      });
+      expect(notifications.notify).toHaveBeenCalledWith([IDS.tenant], 'FAYDA_FAILED', expect.any(Object), expect.any(Object));
+    });
+
+    it('rejects foreign and closed agreements', async () => {
+      prisma.agreement.findFirst.mockResolvedValueOnce(null);
+      await expect(service.verifyFayda(USERS.tenant, IDS.agreement, { faydaId: 'FAYDA-1' })).rejects.toThrow(NotFoundException);
+      prisma.agreement.findFirst.mockResolvedValueOnce({ ...agreement, status: 'CANCELLED' });
+      await expect(service.verifyFayda(USERS.tenant, IDS.agreement, { faydaId: 'FAYDA-1' })).rejects.toThrow(BadRequestException);
+    });
   });
 
   describe('sign', () => {

@@ -48,6 +48,22 @@ describe('Leasing module: rental requests & agreements (e2e)', () => {
     await ctx.prisma.agreement.update({ where: { id: agreementId }, data: { content: view.body.data.content } });
   });
 
+  it('tenant completes a mock Fayda check visible to the owner on the agreement', async () => {
+    const verified = await ctx.http().post(`${API}/agreements/${agreementId}/fayda/verify`).set(ctx.auth('tenant'))
+      .send({ faydaId: 'FAYDA-12345678', fullName: 'TENANT tenant' }).expect(201);
+    expect(verified.body.data).toMatchObject({ verified: true, kycStatus: 'VERIFIED' });
+
+    const ownerView = await ctx.http().get(`${API}/agreements/${agreementId}`).set(ctx.auth('owner')).expect(200);
+    expect(ownerView.body.data.tenant.tenantProfile).toMatchObject({
+      kycStatus: 'VERIFIED',
+      faydaId: 'FAYDA-12345678',
+    });
+
+    const failed = await ctx.http().post(`${API}/agreements/${agreementId}/fayda/verify`).set(ctx.auth('tenant'))
+      .send({ faydaId: 'FAYDA-FAIL01' }).expect(201);
+    expect(failed.body.data).toMatchObject({ verified: false, kycStatus: 'REJECTED' });
+  });
+
   it('renewal is offered as a new agreement and replaces the old one when signed', async () => {
     const renewal = await ctx.http().post(`${API}/agreements/${agreementId}/renew`).set(ctx.auth('owner')).send({ durationMonths: 12, rentAmount: 11000 }).expect(201);
     await ctx.http().post(`${API}/agreements/${agreementId}/renew`).set(ctx.auth('owner')).send({ durationMonths: 12 }).expect(400);

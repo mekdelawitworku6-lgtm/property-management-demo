@@ -81,6 +81,14 @@ export const MESSAGES = {
     EN: { title: 'Agreement ready to sign', body: 'Rental agreement {reference} is ready for your signature.' },
     AM: { title: 'ውሉ ለፊርማ ዝግጁ ነው', body: 'የኪራይ ውል {reference} ለፊርማዎ ዝግጁ ነው።' },
   },
+  FAYDA_VERIFIED: {
+    EN: { title: 'Fayda verified', body: 'Your Fayda ID {faydaId} was verified for agreement {reference}.' },
+    AM: { title: 'የፋይዳ መለያ ተረጋግጧል', body: 'የፋይዳ መለያዎ {faydaId} ለውል {reference} ተረጋግጧል።' },
+  },
+  FAYDA_FAILED: {
+    EN: { title: 'Fayda verification failed', body: 'Fayda ID {faydaId} could not be verified for agreement {reference}: {reason}' },
+    AM: { title: 'የፋይዳ ማረጋገጫ አልተሳካም', body: 'የፋይዳ መለያ {faydaId} ለውል {reference} ማረጋገጥ አልተሳካም፦ {reason}' },
+  },
   AGREEMENT_SIGNED: {
     EN: { title: 'Agreement signed', body: 'Agreement {reference} for {unit} has been signed by {tenant}.' },
     AM: { title: 'ውሉ ተፈርሟል', body: 'ለ{unit} የተዘጋጀው ውል {reference} በ{tenant} ተፈርሟል።' },

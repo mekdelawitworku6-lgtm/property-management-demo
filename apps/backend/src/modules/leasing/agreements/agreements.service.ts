@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AgreementStatus, ApprovalStatus, Prisma, RentalRequest, Unit, UnitStatus, User, UserRole } from '@prisma/client';
+import { AgreementStatus, ApprovalStatus, KycStatus, Prisma, RentalRequest, Unit, UnitStatus, User, UserRole } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../../../common/constants/audit-actions.constants';
@@ -12,6 +12,7 @@ import { generateReference } from '../../../common/utils/reference.util';
 import type { AuthUser } from '../../../common/types/auth-user.type';
 import { NotificationsService } from '../../core-services/notifications/notifications.service';
 import { RealtimeGateway } from '../../core-services/realtime/realtime.gateway';
+import { FaydaMockService } from '../../integrations/fayda/fayda-mock.service';
 import { InvoicesService } from '../../billing/invoices/invoices.service';
 import {
   buildAgreementContent,
@@ -29,6 +30,7 @@ import {
   SignAgreementDto,
   TerminateAgreementDto,
 } from './dto/agreement.dto';
+import { VerifyFaydaDto } from '../../integrations/fayda/dto/verify-fayda.dto';
 
 type Tx = Prisma.TransactionClient;
 type UnitWithProperty = Unit & { property: { id: string; ownerId: string; name: string; address: string; city: string; subCity: string | null } };
@@ -36,7 +38,21 @@ type UnitWithProperty = Unit & { property: { id: string; ownerId: string; name: 
 const AGREEMENT_INCLUDE = {
   unit: { select: { id: true, unitNumber: true, type: true } },
   property: { select: { id: true, name: true, address: true, city: true, subCity: true } },
-  tenant: { select: { id: true, fullName: true, phoneNumber: true } },
+  tenant: {
+    select: {
+      id: true,
+      fullName: true,
+      phoneNumber: true,
+      tenantProfile: {
+        select: {
+          kycStatus: true,
+          faydaId: true,
+          faydaVerifiedAt: true,
+          faydaVerificationRef: true,
+        },
+      },
+    },
+  },
   owner: { select: { id: true, fullName: true, phoneNumber: true } },
 } satisfies Prisma.AgreementInclude;
 
@@ -65,6 +81,7 @@ export class AgreementsService {
     private readonly notifications: NotificationsService,
     private readonly realtime: RealtimeGateway,
     private readonly invoices: InvoicesService,
+    private readonly fayda: FaydaMockService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -220,6 +237,78 @@ export class AgreementsService {
     if (!agreement) throw new NotFoundException('Agreement not found');
     assertCanAccess(user, agreement);
     return { ...agreement, integrity: verifyAgreementIntegrity(agreement) };
+  }
+
+  /** Mock Fayda check bound to a tenant's own pending (or active) agreement. */
+  async verifyFayda(user: AuthUser, id: string, dto: VerifyFaydaDto) {
+    const agreement = await this.prisma.agreement.findFirst({
+      where: { id, tenantId: user.id },
+      include: { unit: { select: { id: true, unitNumber: true } } },
+    });
+    if (!agreement) throw new NotFoundException('Agreement not found');
+    if (![AgreementStatus.PENDING_SIGNATURE, AgreementStatus.ACTIVE].includes(agreement.status)) {
+      throw new BadRequestException(`Fayda verification is unavailable for a ${agreement.status} agreement`);
+    }
+
+    const result = this.fayda.verify(dto);
+    const profile = await this.prisma.tenantProfile.upsert({
+      where: { userId: user.id },
+      update: {
+        idType: 'FAYDA',
+        faydaId: dto.faydaId.trim().toUpperCase(),
+        kycStatus: result.verified ? KycStatus.VERIFIED : KycStatus.REJECTED,
+        faydaVerificationRef: result.reference,
+        faydaVerifiedAt: result.verified ? result.verifiedAt : null,
+        ...(dto.dateOfBirth ? { dateOfBirth: new Date(dto.dateOfBirth) } : {}),
+      },
+      create: {
+        userId: user.id,
+        idType: 'FAYDA',
+        faydaId: dto.faydaId.trim().toUpperCase(),
+        kycStatus: result.verified ? KycStatus.VERIFIED : KycStatus.REJECTED,
+        faydaVerificationRef: result.reference,
+        faydaVerifiedAt: result.verified ? result.verifiedAt : null,
+        ...(dto.dateOfBirth ? { dateOfBirth: new Date(dto.dateOfBirth) } : {}),
+      },
+    });
+
+    await this.audit.log(AUDIT_ACTIONS.FAYDA_VERIFICATION_SUBMITTED, 'Agreement', id, user, {
+      referenceNo: agreement.referenceNo,
+      faydaId: dto.faydaId.trim().toUpperCase(),
+      providerReference: result.reference,
+    });
+    await this.audit.log(
+      result.verified ? AUDIT_ACTIONS.FAYDA_VERIFICATION_VERIFIED : AUDIT_ACTIONS.FAYDA_VERIFICATION_FAILED,
+      'TenantProfile',
+      profile.id,
+      user,
+      { reference: result.reference, reason: result.reason ?? null },
+    );
+    await this.notifications.notify(
+      [user.id],
+      result.verified ? 'FAYDA_VERIFIED' : 'FAYDA_FAILED',
+      {
+        faydaId: dto.faydaId.trim().toUpperCase(),
+        reference: agreement.referenceNo,
+        reason: result.reason ?? '',
+      },
+      { data: { agreementId: id } },
+    );
+    this.realtime.emitToUsers([agreement.ownerId, user.id], REALTIME_EVENTS.KYC_UPDATED, {
+      userId: user.id,
+      kycStatus: profile.kycStatus,
+      faydaId: profile.faydaId,
+    });
+
+    return {
+      agreementId: id,
+      verified: result.verified,
+      kycStatus: profile.kycStatus,
+      faydaId: profile.faydaId,
+      faydaVerificationRef: result.reference,
+      faydaVerifiedAt: profile.faydaVerifiedAt,
+      reason: result.reason ?? null,
+    };
   }
 
   /** FR-TEN-03: tenant signs digitally → ACTIVE, unit OCCUPIED, invoices generated. */

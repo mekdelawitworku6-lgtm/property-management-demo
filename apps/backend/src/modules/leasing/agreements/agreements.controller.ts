@@ -6,6 +6,7 @@ import { Public } from '../../../common/decorators/public.decorator';
 import { Roles } from '../../../common/decorators/roles.decorator';
 import { RequirePermissions } from '../../../common/decorators/permissions.decorator';
 import { AuditRead } from '../../../common/decorators/audit-read.decorator';
+import { VerifyFaydaDto } from '../../integrations/fayda/dto/verify-fayda.dto';
 import { ResponseMessage } from '../../../common/decorators/response-message.decorator';
 import type { AuthUser } from '../../../common/types/auth-user.type';
 import { AgreementsService } from './agreements.service';
@@ -56,6 +57,18 @@ export class AgreementsController {
   @ApiOperation({ summary: 'Full agreement text + integrity check' })
   findOne(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.agreementsService.findOne(user, id);
+  }
+
+  @Post(':id/fayda/verify')
+  @Roles(UserRole.TENANT)
+  @ResponseMessage('Fayda verification completed')
+  @ApiOperation({ summary: 'Tenant completes a mock Fayda check for this agreement' })
+  verifyFayda(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: VerifyFaydaDto,
+  ) {
+    return this.agreementsService.verifyFayda(user, id, dto);
   }
 
   @Post(':id/sign')

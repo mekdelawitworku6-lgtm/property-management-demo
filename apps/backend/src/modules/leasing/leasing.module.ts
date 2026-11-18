@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { BillingModule } from '../billing/billing.module';
+import { FaydaModule } from '../integrations/fayda/fayda.module';
 import { AgreementsController } from './agreements/agreements.controller';
 import { AgreementsService } from './agreements/agreements.service';
 import { RentalRequestsController } from './rental-requests/rental-requests.controller';
@@ -7,7 +8,7 @@ import { RentalRequestsService } from './rental-requests/rental-requests.service
 import { InspectionsModule } from './inspections/inspections.module';
 
 @Module({
-  imports: [BillingModule, InspectionsModule],
+  imports: [BillingModule, FaydaModule, InspectionsModule],
   controllers: [AgreementsController, RentalRequestsController],
   providers: [AgreementsService, RentalRequestsService],
   exports: [AgreementsService, RentalRequestsService],

@@ -3,6 +3,7 @@ export const REALTIME_EVENTS = {
   NOTIFICATION: 'notification',
   RENTAL_REQUEST_UPDATED: 'rental-request.updated',
   AGREEMENT_UPDATED: 'agreement.updated',
+  KYC_UPDATED: 'kyc.updated',
   INVOICE_UPDATED: 'invoice.updated',
   PAYMENT_UPDATED: 'payment.updated',
   COMPLAINT_UPDATED: 'complaint.updated',
