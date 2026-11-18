@@ -19,7 +19,7 @@ describe('PaymentsService', () => {
     queryOrder: jest.fn(),
     isMock: jest.fn().mockReturnValue(true),
   };
-  const invoices = { applyPayment: jest.fn() };
+  const invoices = { applyPayment: jest.fn(), ensureRentInvoicesThrough: jest.fn().mockResolvedValue(0) };
   const service = new PaymentsService(prisma, audit as any, notifications as any, realtime as any, telebirr as any, invoices as any, mockConfig({ BASE_URL: 'http://api' }));
 
   beforeEach(() => {
@@ -63,6 +63,13 @@ describe('PaymentsService', () => {
       await expect(service.resolvePayable(IDS.invoice)).rejects.toThrow(NotFoundException);
     });
 
+    it('generates future invoices for an active agreement before resolving the payable', async () => {
+      const endDate = new Date('2027-09-30T00:00:00.000Z');
+      prisma.invoice.findUnique.mockResolvedValueOnce({ ...invoice, agreement: { status: 'ACTIVE', endDate } });
+      await expect(service.resolvePayable(IDS.invoice, 36_000)).resolves.toMatchObject({ amount: 36_000 });
+      expect(invoices.ensureRentInvoicesThrough).toHaveBeenCalledWith(IDS.agreement, endDate);
+    });
+
     it('rejects a zero or negative amount', async () => {
       await expect(service.resolvePayable(IDS.invoice, 0)).rejects.toThrow('greater than zero');
       await expect(service.resolvePayable(IDS.invoice, -100)).rejects.toThrow('greater than zero');
@@ -86,6 +93,20 @@ describe('PaymentsService', () => {
       prisma.invoice.findMany.mockResolvedValue([{ amount: 5000, amountPaid: 0 }]);
       prisma.payment.aggregate.mockResolvedValue({ _sum: { amount: 3000 } });
       await expect(service.maxPayable(IDS.agreement, invoice)).resolves.toBe(20_000);
+    });
+
+    it('accepts a 12-month prepayment once the future invoices exist', async () => {
+      const endDate = new Date('2027-09-30T00:00:00.000Z');
+      prisma.invoice.findUnique.mockResolvedValue({ ...invoice, agreement: { status: 'ACTIVE', endDate } });
+      invoices.ensureRentInvoicesThrough.mockImplementationOnce(async () => {
+        prisma.invoice.findMany.mockResolvedValueOnce([
+          { amount: 18_000, amountPaid: 0 },
+          { amount: 18_000, amountPaid: 0 },
+        ]);
+        return 2;
+      });
+      const result: any = await service.initiateTelebirr(USERS.tenant, { invoiceId: IDS.invoice, amount: 54_000 });
+      expect(result.payment).toMatchObject({ amount: 54_000 });
     });
 
     it('never goes below what is still owed on this invoice', async () => {

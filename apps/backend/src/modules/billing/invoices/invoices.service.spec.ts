@@ -55,6 +55,22 @@ describe('InvoicesService', () => {
     expect(notifications.notify).toHaveBeenCalledWith([IDS.tenant], 'RENT_DUE', expect.objectContaining({ dueDate: '2026-11-05', unit: 'A-101' }), expect.objectContaining({ sms: true }));
   });
 
+  it('ensureRentInvoicesThrough creates remaining rent invoices without notifying', async () => {
+    prisma.agreement.findUnique.mockResolvedValueOnce(agreement);
+    prisma.invoice.findMany.mockResolvedValueOnce([{ type: 'RENT', periodStart: d('2026-10-01') }]);
+    await expect(service.ensureRentInvoicesThrough(IDS.agreement, agreement.endDate)).resolves.toBe(11);
+    const data = prisma.invoice.createMany.mock.calls[0][0].data;
+    expect(data).toHaveLength(11);
+    expect(data[0]).toMatchObject({ type: 'RENT', periodStart: d('2026-11-01') });
+    expect(notifications.notify).not.toHaveBeenCalled();
+  });
+
+  it('ensureRentInvoicesThrough ignores inactive agreements', async () => {
+    prisma.agreement.findUnique.mockResolvedValueOnce({ ...agreement, status: 'EXPIRED' });
+    await expect(service.ensureRentInvoicesThrough(IDS.agreement, agreement.endDate)).resolves.toBe(0);
+    expect(prisma.invoice.createMany).not.toHaveBeenCalled();
+  });
+
   it('markOverdue flags unpaid invoices past due', async () => {
     prisma.invoice.updateMany.mockResolvedValue({ count: 3 });
     await expect(service.markOverdue(d('2026-11-10'))).resolves.toBe(3);

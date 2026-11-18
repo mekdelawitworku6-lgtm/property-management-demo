@@ -104,6 +104,16 @@ export class InvoicesService {
     return created;
   }
 
+  async ensureRentInvoicesThrough(agreementId: string, upTo: Date, client: Tx | PrismaService = this.prisma): Promise<number> {
+    const agreement = await client.agreement.findUnique({ where: { id: agreementId } });
+    if (!agreement || agreement.status !== AgreementStatus.ACTIVE) return 0;
+    const end = startOfDayUtc(agreement.endDate);
+    const limit = startOfDayUtc(upTo);
+    const drafts = buildRentInvoiceDrafts(agreement, limit < end ? limit : end);
+    const created = await this.createMissing(client, agreement.id, drafts);
+    return created.length;
+  }
+
   /** Daily job: flags unpaid invoices past their due date as OVERDUE. */
   async markOverdue(now: Date = new Date()): Promise<number> {
     const result = await this.prisma.invoice.updateMany({

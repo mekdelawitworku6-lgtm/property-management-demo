@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { ConfirmationSource, InvoiceStatus, InvoiceType, Payment, PaymentMethod, PaymentStatus, Prisma, UserRole } from '@prisma/client';
+import { AgreementStatus, ConfirmationSource, InvoiceStatus, InvoiceType, Payment, PaymentMethod, PaymentStatus, Prisma, UserRole } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../database/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
@@ -93,10 +93,16 @@ export class PaymentsService {
    * enforced by {@link assertWithinPrepaymentCeiling}.
    */
   async resolvePayable(invoiceId: string, requestedAmount?: number) {
-    const invoice = await this.prisma.invoice.findUnique({ where: { id: invoiceId } });
+    const invoice = await this.prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      include: { agreement: { select: { status: true, endDate: true } } },
+    });
     if (!invoice) throw new NotFoundException('Invoice not found');
     if (invoice.status === InvoiceStatus.PAID || invoice.status === InvoiceStatus.CANCELLED) {
       throw new BadRequestException(`Invoice is ${invoice.status}`);
+    }
+    if (invoice.agreement?.status === AgreementStatus.ACTIVE) {
+      await this.invoices.ensureRentInvoicesThrough(invoice.agreementId, invoice.agreement.endDate);
     }
     const pending = await this.prisma.payment.aggregate({
       where: { invoiceId, status: PaymentStatus.PENDING },
