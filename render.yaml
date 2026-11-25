@@ -1,0 +1,56 @@
+# Render Blueprint for the public demo of the Property Management Platform API.
+# Docs: https://render.com/docs/blueprint-spec
+version: "1"
+
+services:
+  # Managed PostgreSQL for the demo. Free-tier databases are deleted after 30 days;
+  # upgrade to Starter if you want the demo data to persist long term.
+  - type: pserv
+    name: property-management-demo-db
+    runtime: postgres
+    plan: free
+    databaseName: property_management
+    user: property_demo
+    envVars:
+      - key: POSTGRES_PASSWORD
+        generateValue: true
+
+  # NestJS API + Swagger UI. The Dockerfile builds from apps/backend.
+  - type: web
+    name: property-management-demo-api
+    runtime: docker
+    plan: free
+    dockerContext: ./apps/backend
+    dockerfilePath: ./apps/backend/Dockerfile
+    # Migrate, load the idempotent demo data, then serve the API.
+    dockerCommand: sh -c "npx prisma migrate deploy && node dist/database/seeds/seed.js && node dist/main.js"
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4100
+      - key: BASE_URL
+        value: https://property-management-demo-api.onrender.com
+      - key: CORS_ORIGINS
+        value: '*'
+      - key: DATABASE_URL
+        fromDatabase:
+          name: property-management-demo-db
+          property: connectionString
+      # Generated once by Render; rotate from the dashboard if needed.
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: DATA_ENCRYPTION_KEY
+        generateValue: true
+      - key: OWNER_AUTO_APPROVE
+        value: 'false'
+      - key: TENANT_AUTO_APPROVE
+        value: 'true'
+      # No credentials needed for the demo: SMS and Telebirr run in mock mode.
+      - key: SMS_MOCK
+        value: 'true'
+      - key: TELEBIRR_MOCK
+        value: 'true'

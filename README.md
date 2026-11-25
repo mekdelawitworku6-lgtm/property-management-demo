@@ -12,6 +12,16 @@ Requirements are in [`docs/srs/`](docs/srs).
 
 **Stack:** NestJS 10 · Prisma 6 · PostgreSQL 16 · Socket.IO · Docker
 
+## Live demo
+
+The public demo is deployed on Render with seeded data and Swagger UI:
+
+- **API docs:** https://property-management-demo-api.onrender.com/api/docs
+- **Health:** https://property-management-demo-api.onrender.com/health
+
+All demo accounts use the password `Demo@12345` (see [Demo accounts](#demo-accounts)).
+For deployment steps and a guided walkthrough, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
 ---
 
 ## Quick start (Docker only)
@@ -19,8 +29,8 @@ Requirements are in [`docs/srs/`](docs/srs).
 Everything runs in Docker. You never need Node, npm or Postgres on the host.
 
 ```bash
-git clone git@github.com:PossibleTechGroup/PropertyManagement.git
-cd PropertyManagement
+git clone https://github.com/mekdelawitworku6/property-management-demo.git
+cd property-management-demo
 cp .env.example .env          # optional: defaults work out of the box (mock SMS + mock Telebirr)
 docker compose up -d --build
 ```
@@ -155,7 +165,7 @@ Fast unit tests (with the database mocked) are also available: `docker compose r
 ## Project structure
 
 ```
-PropertyManagement/
+property-management-demo/
 ├── docker-compose.yml          postgres · backend · seed · tools
 ├── docker/postgres-init.sql    creates the e2e test database
 ├── docs/srs/                   requirements documents
