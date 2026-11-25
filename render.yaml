@@ -3,18 +3,6 @@
 version: "1"
 
 services:
-  # Managed PostgreSQL for the demo. Free-tier databases are deleted after 30 days;
-  # upgrade to Starter if you want the demo data to persist long term.
-  - type: pserv
-    name: property-management-demo-db
-    runtime: postgres
-    plan: free
-    databaseName: property_management
-    user: property_demo
-    envVars:
-      - key: POSTGRES_PASSWORD
-        generateValue: true
-
   # NestJS API + Swagger UI. The Dockerfile builds from apps/backend.
   - type: web
     name: property-management-demo-api
@@ -54,3 +42,14 @@ services:
         value: 'true'
       - key: TELEBIRR_MOCK
         value: 'true'
+
+# Render Postgres instances belong under `databases`, not `services`.
+# Render generates the database password automatically; fromDatabase above
+# injects the full connection string, including that password.
+databases:
+  # Free-tier databases are deleted after 30 days;
+  # upgrade to Starter if you want the demo data to persist long term.
+  - name: property-management-demo-db
+    plan: free
+    databaseName: property_management
+    user: property_demo

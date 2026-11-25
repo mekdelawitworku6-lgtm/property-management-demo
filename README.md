@@ -12,15 +12,14 @@ Requirements are in [`docs/srs/`](docs/srs).
 
 **Stack:** NestJS 10 · Prisma 6 · PostgreSQL 16 · Socket.IO · Docker
 
-## Live demo
+## Public demo
 
-The public demo is deployed on Render with seeded data and Swagger UI:
+The included [Render Blueprint](render.yaml) provisions a managed PostgreSQL database and the NestJS API with seeded demo data. Deploy it to Render using the steps in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md); the expected URLs are:
 
 - **API docs:** https://property-management-demo-api.onrender.com/api/docs
 - **Health:** https://property-management-demo-api.onrender.com/health
 
-All demo accounts use the password `Demo@12345` (see [Demo accounts](#demo-accounts)).
-For deployment steps and a guided walkthrough, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+These URLs only work after the blueprint has been applied — if the service name is taken, Render appends a suffix and you should use the URL shown in its dashboard. All demo accounts use the password `Demo@12345` (see [Demo accounts](#demo-accounts)).
 
 ---
 
