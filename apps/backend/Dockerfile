@@ -26,6 +26,9 @@ RUN npx prisma generate
 COPY tsconfig.json tsconfig.build.json nest-cli.json ./
 COPY src ./src
 RUN npm run build && npm prune --omit=dev
+# Keep the pinned Prisma CLI in the image. The container runs `prisma migrate deploy` on boot;
+# without this, npx would fetch a newer major version at runtime and could break migrations.
+RUN npm install --no-save --no-audit --no-fund prisma@6.19.3
 
 # ---- Runtime stage ----
 FROM base AS runtime
