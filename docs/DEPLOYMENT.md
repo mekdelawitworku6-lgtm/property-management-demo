@@ -11,6 +11,11 @@ public, interactive demo of the Property Management Platform API:
 The integrations run in **mock mode** (`SMS_MOCK=true`, `TELEBIRR_MOCK=true`), so no external
 credentials are required.
 
+To deploy a fresh instance alongside an existing one, select [`render-v2.yaml`](../render-v2.yaml)
+as the Blueprint file in Render instead of `render.yaml`. It creates `property-management-demo-api-v2`
+and `property-management-demo-db-v2`, served at
+`https://property-management-demo-api-v2.onrender.com`.
+
 ---
 
 ## Deploy in 5 minutes
