@@ -10,8 +10,9 @@ services:
     plan: free
     dockerContext: ./apps/backend
     dockerfilePath: ./apps/backend/Dockerfile
-    # Migrate, load the idempotent demo data, then serve the API.
-    dockerCommand: sh -c "npx prisma migrate deploy && node dist/database/seeds/seed.js && node dist/main.js"
+    # The Dockerfile CMD migrates, loads the idempotent demo data, then serves the API.
+    # Don't override dockerCommand here: Render's shell handling mangles a chained
+    # `sh -c "..."` command and the container exits with status 127.
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV

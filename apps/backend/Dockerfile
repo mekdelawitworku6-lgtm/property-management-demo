@@ -43,5 +43,5 @@ COPY package.json ./
 RUN mkdir -p uploads && chown -R node:node /app
 USER node
 EXPOSE 4100
-# Apply pending migrations, then start the API.
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
+# Apply pending migrations, load the idempotent demo data, then start the API.
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/database/seeds/seed.js && node dist/main.js"]
