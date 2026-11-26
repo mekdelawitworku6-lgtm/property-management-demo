@@ -246,7 +246,8 @@ export class AgreementsService {
       include: { unit: { select: { id: true, unitNumber: true } } },
     });
     if (!agreement) throw new NotFoundException('Agreement not found');
-    if (![AgreementStatus.PENDING_SIGNATURE, AgreementStatus.ACTIVE].includes(agreement.status)) {
+    const verifiableStatuses: AgreementStatus[] = [AgreementStatus.PENDING_SIGNATURE, AgreementStatus.ACTIVE];
+    if (!verifiableStatuses.includes(agreement.status)) {
       throw new BadRequestException(`Fayda verification is unavailable for a ${agreement.status} agreement`);
     }
 

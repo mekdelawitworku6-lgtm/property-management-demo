@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { DepositRefundStatus, InspectionStatus, InspectionType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
-import { AUDIT_ACTIONS } from '../../../common/constants/audit-actions.constants';
+import { AUDIT_ACTIONS, type AuditAction } from '../../../common/constants/audit-actions.constants';
 import { REALTIME_EVENTS } from '../../../common/constants/events.constants';
 import { isPlatformWide, requireOwnerId } from '../../../common/utils/owner-scope.util';
 import { buildPaginatedList, resolvePagination } from '../../../common/utils/paginated-list.util';
@@ -73,7 +73,7 @@ export class DepositRefundsService {
       agreement?: { property?: { name?: string } | null; unit?: { unitNumber?: string } | null } | null;
     },
     key: RefundNotificationKey,
-    action: string,
+    action: AuditAction,
   ) {
     await this.notifications.notify([refund.tenantId], key, {
       reference: refund.referenceNo,
@@ -225,7 +225,8 @@ export class DepositRefundsService {
 
   async reject(user: AuthUser, id: string, dto: DecideDepositRefundDto) {
     const refund = await this.findOne(user, id);
-    if (![DepositRefundStatus.PENDING, DepositRefundStatus.APPROVED].includes(refund.status)) {
+    const decidableStatuses: DepositRefundStatus[] = [DepositRefundStatus.PENDING, DepositRefundStatus.APPROVED];
+    if (!decidableStatuses.includes(refund.status)) {
       throw new BadRequestException(`Deposit refund is ${refund.status}`);
     }
     const updated = await this.prisma.depositRefund.update({
